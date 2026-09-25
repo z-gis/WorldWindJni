@@ -125,8 +125,6 @@ CMake `3.22.1`。验证链接是否缺库：报 `cannot find -lxxx` / `Unable to
 
 worldwindjni 以 **AAR 文件**方式集成，无需引入源码模块。
 
-> 📦 **图省事直接下载预编译 AAR**：[worldwindjni-release.aar](https://github.com/z-gis/WorldWindJni/releases/download/v1.0.0/worldwindjni-release.aar)（约 25.6MB，已内含双 ABI 的 `libworldwindjni.so` 与 `assets/proj` 数据，宿主无需安装 NDK/CMake）。若需自定义版本，按下节自行构建。
-
 **第一步：放入 AAR** —— 把 `worldwindjni-release.aar` 复制到宿主工程 `app/libs/`（宿主无需安装
 NDK/CMake，渲染内核已编译进 AAR 的 `jni/*.so`）。
 

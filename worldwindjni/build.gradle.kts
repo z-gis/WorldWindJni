@@ -2,6 +2,9 @@ plugins {
     alias(libs.plugins.android.library)
 }
 
+// worldwindjni 库版本：与 GitHub Release tag（v1.0.0）保持一致
+version = "1.0.0"
+
 android {
     namespace = "com.zys.worldwindjni"
     compileSdk {
