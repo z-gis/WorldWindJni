@@ -37,7 +37,8 @@ class LocationMarkerActivity : BaseMapActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        addBasemap(Camera(latitude = 39.92, longitude = 116.40, altitude = 30_000.0))
+        // 离线 topo 基图 + 可开关在线详细层（蓝点近景；默认只看世界图）
+        addTopoBasemap(Camera(latitude = 39.92, longitude = 116.40, altitude = 30_000.0), onlineDetail = true)
 
         // 初始静态蓝点（无方向箭头）
         val start = Position(latitude = 39.92, longitude = 116.38)

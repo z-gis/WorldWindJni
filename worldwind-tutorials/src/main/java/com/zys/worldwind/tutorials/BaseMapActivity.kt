@@ -73,14 +73,62 @@ abstract class BaseMapActivity : AppCompatActivity() {
         })
     }
 
-    /** 挂在线瓦片底图（OSM 公共图源）并把相机定位到 [camera]（默认北京） */
-    protected fun addBasemap(camera: Camera = Camera(39.9, 116.4, 3_000_000.0)) {
+    /**
+     * 挂内置 worldtopobathy 世界图作离线基图（仿 wwd BackgroundLayer——tutorials/03「基础瓦片」的离线等价）：
+     * 因当前预编译 libgdal 裁剪了 PNG 驱动（无 GDAL 栅格即时重投影通路），改走已工作的瓦片磁盘缓存管线：
+     * 把 assets/tiles/topo 预切的全球墨卡托 XYZ 瓦片（布局 `<z>/<x>_<y>.tile`）解到文件目录，以空 URL 模板
+     * 的 [NativeMapView.addTileLayer]（只读盘、不联网）作底图——零网络、永不棋盘。
+     * [onlineDetail]=true 时另挂一个 OSM 在线详细层（底图同趟、绘制在 topo 之上矢量之下），
+     * 默认隐藏并加「在线详细 开/关」按钮：常规只看离线世界图（不棋盘），联网后手动开启取街景细节。
+     * 相机定位到 [camera]。
+     */
+    protected fun addTopoBasemap(
+        camera: Camera = Camera(20.0, 0.0, 30_000_000.0),
+        onlineDetail: Boolean = false,
+    ) {
+        val topoCache = File(filesDir, "tiles/topo")
+        // 幂等解压：用版本标记文件控制，仅首次（或瓦片版本升级）时拷 85 个瓦片
+        val marker = File(topoCache, ".ver")
+        val ver = TileSources.TOPO_MAX_LEVEL.toString()
+        if (runCatching { marker.readText() }.getOrNull() != ver) {
+            copyAssetsDir(TileSources.TOPO_ASSET_DIR, topoCache)
+            marker.writeText(ver)
+        }
         map.addTileLayer(
-            cacheDir = File(filesDir, "tiles/osm").absolutePath,
-            urlTemplate = TileSources.OSM,
-            maxLevel = TileSources.OSM_MAX_LEVEL,
+            cacheDir = topoCache.absolutePath,
+            urlTemplate = "",  // 空模板禁用联网：全部瓦片已在磁盘缓存
+            maxLevel = TileSources.TOPO_MAX_LEVEL,
         )
+        if (onlineDetail) {
+            // 图层按加入次序共享下标（layers_）：BaseMapActivity 中本方法恒为最先建层，故 topo=0、OSM=1
+            val osmIdx = 1
+            map.addTileLayer(
+                cacheDir = File(filesDir, "tiles/osm").absolutePath,
+                urlTemplate = TileSources.OSM,
+                maxLevel = TileSources.OSM_MAX_LEVEL,
+            )
+            map.setLayerVisible(osmIdx, false)  // 默认隐藏：常规只看离线世界图，避免断网时详细层显棋盘
+            addDemoAction("在线详细 开") { map.setLayerVisible(osmIdx, true) }
+            addDemoAction("在线详细 关") { map.setLayerVisible(osmIdx, false) }
+        }
         map.setCamera(camera)
+    }
+
+    /** 递归把 assets 下目录（含子目录）解到目标文件目录（非空子项视为目录递归，否则当文件拷贝）。 */
+    private fun copyAssetsDir(assetPath: String, destDir: File) {
+        destDir.mkdirs()
+        val children = assets.list(assetPath) ?: return
+        for (name in children) {
+            if (name.isEmpty()) continue
+            val childAsset = "$assetPath/$name"
+            val sub = assets.list(childAsset)
+            if (sub != null && sub.isNotEmpty()) {
+                copyAssetsDir(childAsset, File(destDir, name))
+            } else {
+                val dst = File(destDir, name)
+                assets.open(childAsset).use { src -> dst.outputStream().use { out -> src.copyTo(out) } }
+            }
+        }
     }
 
     protected fun toast(msg: CharSequence) {

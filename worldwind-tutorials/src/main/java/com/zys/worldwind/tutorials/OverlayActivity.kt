@@ -28,7 +28,8 @@ class OverlayActivity : BaseMapActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        addBasemap(Camera(latitude = 39.915, longitude = 116.40, altitude = 12_000.0))
+        // 离线 topo 基图 + 可开关在线详细层（近景绘制线/面；默认只看世界图）
+        addTopoBasemap(Camera(latitude = 39.915, longitude = 116.40, altitude = 12_000.0), onlineDetail = true)
 
         // 叠加层「加一次、就地更新多次」：橙红线 + 半透明填充（多边形模式生效）
         overlayIdx = map.addOverlayLayer(

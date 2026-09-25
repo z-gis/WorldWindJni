@@ -34,7 +34,8 @@ class VectorLayerActivity : BaseMapActivity() {
             }
         }.absolutePath
 
-        addBasemap(Camera(latitude = 39.91, longitude = 116.41, altitude = 25_000.0))
+        // 离线 topo 基图 + 可开关的在线详细层（近景需城区细节；默认只看世界图不棋盘）
+        addTopoBasemap(Camera(latitude = 39.91, longitude = 116.41, altitude = 25_000.0), onlineDetail = true)
 
         addDemoAction(getString(R.string.action_add_vector)) { addVector() }
     }

@@ -4,8 +4,9 @@ import android.os.Bundle
 import com.zys.worldwindjni.Camera
 
 /**
- * 演示 01 · 在线瓦片底图（对应 tutorials/03「最小用例」）：
- *  - [com.zys.worldwindjni.NativeMapView.addTileLayer]：磁盘缓存目录 + URL 模板 + 图源最大级别；
+ * 演示 01 · 瓦片底图（对应 tutorials/03「最小用例」）：
+ *  - 基图为内置 worldtopobathy 离线世界图（仿 wwd BackgroundLayer，零网络不棋盘）；
+ *  - 「在线详细」开关：[com.zys.worldwindjni.NativeMapView.addTileLayer]（磁盘缓存 + URL 模板 + 最大级别），联网可开街景细节；
  *  - [com.zys.worldwindjni.NativeMapView.setCamera]：经纬度（度）+ 高度（米）定位相机；
  *  - [com.zys.worldwindjni.NativeMapView.setOnTapListener] + screenToGeo：单击屏幕点 → 经纬度；
  *  - [com.zys.worldwindjni.NativeMapView.getCamera]：读回当前相机（含 heading/tilt）。
@@ -19,8 +20,8 @@ class BasicMapActivity : BaseMapActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 底图 + 相机定位北京（300 万米高度约可见华北）
-        addBasemap(Camera(latitude = 39.9, longitude = 116.4, altitude = 3_000_000.0))
+        // 离线 worldtopobathy 基图 + 可开关在线详细；相机定位北京（300 万米高度约可见华北）
+        addTopoBasemap(Camera(latitude = 39.9, longitude = 116.4, altitude = 3_000_000.0), onlineDetail = true)
 
         // 单击 → 经纬度（采集/测量加点的同款口径）
         map.setOnTapListener { x, y ->

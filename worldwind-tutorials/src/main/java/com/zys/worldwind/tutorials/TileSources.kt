@@ -13,4 +13,14 @@ object TileSources {
 
     /** OSM 标准瓦片图源最大级别 */
     const val OSM_MAX_LEVEL = 19
+
+    /**
+     * 内置离线世界图瓦片（仿 wwd worldtopobathy 基础瓦片）在 assets 下的目录：
+     * 预切好的全球墨卡托 XYZ 瓦片，布局 `<z>/<x>_<y>.tile`（PNG 字节），与 native TileCache 磁盘缓存同构。
+     * 因当前预编译 libgdal 裁剪了 PNG 驱动（无 GDAL 栅格即时重投影通路），改走已工作的瓦片磁盘缓存管线。
+     */
+    const val TOPO_ASSET_DIR = "tiles/topo"
+
+    /** 内置离线世界图瓦片已生成的最大级别（源图 1024×512，超过此级由 native 拉伸末级瓦片） */
+    const val TOPO_MAX_LEVEL = 3
 }

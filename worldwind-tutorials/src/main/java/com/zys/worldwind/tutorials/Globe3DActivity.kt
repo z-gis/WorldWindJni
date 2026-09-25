@@ -17,8 +17,8 @@ class Globe3DActivity : BaseMapActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 高相机位便于看球体全貌
-        addBasemap(Camera(latitude = 30.0, longitude = 110.0, altitude = 30_000_000.0))
+        // 高相机位便于看球体全貌；内置 worldtopobathy 离线基图（仿 wwd BackgroundLayer），3D 永不棋盘
+        addTopoBasemap(Camera(latitude = 30.0, longitude = 110.0, altitude = 30_000_000.0))
 
         addDemoAction("2D 平面") { map.setViewMode(NativeMapView.ViewMode.TWO_D) }
         addDemoAction("3D 球体") { map.setViewMode(NativeMapView.ViewMode.THREE_D) }

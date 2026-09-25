@@ -5,8 +5,8 @@
     <!-- 主页菜单 -->
     <string name="menu_subtitle">worldwindjni 功能演示 · 逐项点击体验</string>
 
-    <string name="demo_basic_title">01 · 在线瓦片底图</string>
-    <string name="demo_basic_desc">显示在线瓦片底图 + 相机定位北京；单击查看经纬度</string>
+    <string name="demo_basic_title">01 · 瓦片底图</string>
+    <string name="demo_basic_desc">内置 worldtopobathy 世界底图（不棋盘）+ 可开关在线详细；相机定位北京，单击看经纬度</string>
     <string name="demo_globe_title">02 · 2D / 3D 视图切换</string>
     <string name="demo_globe_desc">平面墨卡托与 3D 球体切换；3D 下双指可旋转/俯仰</string>
     <string name="demo_vector_title">03 · 矢量图层与拾取</string>
