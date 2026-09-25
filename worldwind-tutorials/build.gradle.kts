@@ -39,6 +39,7 @@ android {
 dependencies {
     // 演示应用与库同仓，直接用 project 依赖（外部宿主按仓库根 README「在宿主 App 中集成」以 AAR 集成）
     implementation(project(":worldwindjni"))
+    //implementation("com.zys:worldwindjni:1.0.0")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)

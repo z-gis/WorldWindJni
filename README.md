@@ -150,6 +150,11 @@ dependencies {
 }
 ```
 
+> 注意：仓库地址要加在 **`dependencyResolutionManagement.repositories`**（解析 `implementation` 依赖用）；
+> 只加进 `pluginManagement.repositories` 不对——那处只管 Gradle 插件，坐标会报
+> `Could not find com.zys:worldwindjni:1.0.0`。本仓库的 `worldwind-tutorials` 演示模块同样按此配置，
+> 把 `implementation(project(":worldwindjni"))` 换成上面的 Maven 坐标即可验证“外部消费者”体验。
+>
 > 与下方手动 files() 方式的区别：Maven 坐标会自动解析传递依赖（无需再手写 `core-ktx`）。
 > 其余（`NativeSrs.initProjData` 初始化、宿主自行声明 `INTERNET` 权限、`NativeMapView` 用法）与
 > 「AAR 三步曲」的第二~四步完全一致。

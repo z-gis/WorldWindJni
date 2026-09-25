@@ -9,6 +9,7 @@ pluginManagement {
         }
         mavenCentral()
         gradlePluginPortal()
+        maven { url = uri("https://z-gis.github.io/WorldWindJni/maven") }
     }
 }
 plugins {
@@ -19,6 +20,7 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        maven { url = uri("https://z-gis.github.io/WorldWindJni/maven") } // worldwindjni 等自建 Maven 仓产物
     }
 }
 
