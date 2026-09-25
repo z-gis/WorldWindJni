@@ -47,10 +47,21 @@ libminizip.a  libexpat.a  libz.a  libcurl.a
 > `libcurl.a` 内部已静态打包 OpenSSL 1.1.1w + zlib，无需再单独链
 > libssl/libcrypto。
 
-### 路径 A：下载现成产物
+### 路径 A：下载现成产物（免编译，推荐快速上手）
 
-向维护者索取与头文件版本匹配的预编译 `.a`、三方头与 `assets/proj` 数据，解压到上述目录即可，
-无需本地编译工具链。
+本仓库 [Releases](https://github.com/z-gis/WorldWindJni/releases) 提供与头文件版本配套的预编译
+产物包 **`worldwindjni-prebuilt-libs-v1.0.0.zip`**（约 106MB，含双 ABI 共 28 个 `.a` + 三方头 +
+`assets/proj` 数据，共 290 个文件）。压缩包保持仓库相对路径（顶层 `worldwindjni/...`），在**仓库根
+目录**解压即全部落位，无需本地编译工具链：
+
+```bash
+# 于仓库根目录执行
+curl -LO https://github.com/z-gis/WorldWindJni/releases/download/v1.0.0/worldwindjni-prebuilt-libs-v1.0.0.zip
+unzip worldwindjni-prebuilt-libs-v1.0.0.zip   # 产物落入 cpp/jniLibs、cpp/include、assets/proj
+```
+
+> 直链：<https://github.com/z-gis/WorldWindJni/releases/download/v1.0.0/worldwindjni-prebuilt-libs-v1.0.0.zip>
+> 该包由路径 B 的 `build-all.sh` 产出后打包，若你更新了三方库版本，请用路径 B 重编并同步更新 Release。
 
 ### 路径 B：用 build-scripts 一键自行编译（推荐）
 
