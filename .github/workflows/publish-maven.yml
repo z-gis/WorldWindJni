@@ -1,0 +1,73 @@
+# 把 worldwindjni 的 AAR 以 Maven 布局发布到 GitHub Pages（gh-pages:/maven）
+# 消费者只需在自己的仓库列表里加 https://<owner>.github.io/WorldWindJni/maven 即可按坐标自动下载。
+#
+# 关键：native 的第三方 .a 不入 git，CI 无法现编 GDAL，故先下载 Release 里已构建好的
+# worldwindjni-prebuilt-libs-*.zip 解压到仓库根（.a/生成头/assets-proj 就位），再 assembleRelease。
+name: Publish Maven (GitHub Pages)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "携带 prebuilt-libs zip 的 Release tag（如 v1.0.0）"
+        required: true
+        default: "v1.0.0"
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-maven
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Resolve release tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download prebuilt native libs from Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "${{ steps.tag.outputs.tag }}" \
+            --pattern "worldwindjni-prebuilt-libs-*.zip" \
+            --clobber
+          unzip -o worldwindjni-prebuilt-libs-*.zip
+          echo "jniLibs:"; ls -1 worldwindjni/src/main/cpp/jniLibs/*/*.a | head
+
+      - name: Grant gradlew execute
+        run: chmod +x gradlew
+
+      - name: Build & publish AAR to local maven repo (worldwindjni/build/repo)
+        run: ./gradlew --no-daemon :worldwindjni:publish
+
+      - name: Deploy maven repo to GitHub Pages (gh-pages:/maven)
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./worldwindjni/build/repo
+          destination_dir: maven
+          keep_files: true
+          commit_message: "Deploy maven artifacts (${{ steps.tag.outputs.tag }})"

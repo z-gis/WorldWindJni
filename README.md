@@ -121,7 +121,43 @@ bash build-all.sh
 CMake `3.22.1`。验证链接是否缺库：报 `cannot find -lxxx` / `Unable to find library` 即 `.a`
 缺文件或目录名不对。
 
-## 在宿主 App 中集成（AAR 三步曲）
+## 引用方式：Maven 坐标（推荐，Gradle/IDE 自动下载）
+
+发布产物托管在本仓库的 **GitHub Pages Maven 仓**，宿主**无需手动下载 AAR**——在 `settings.gradle.kts`
+的 `dependencyResolutionManagement.repositories` 里加一行仓库，再按坐标引用：
+
+```kotlin
+// settings.gradle.kts
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+        maven { url = uri("https://z-gis.github.io/WorldWindJni/maven") } // worldwindjni
+    }
+}
+```
+
+```kotlin
+// app/build.gradle.kts
+android {
+    defaultConfig {
+        minSdk = 24
+        ndk { abiFilters += listOf("x86_64", "arm64-v8a") }
+    }
+}
+dependencies {
+    implementation("com.zys:worldwindjni:1.0.0")   // 自动下载；传递依赖（androidx core-ktx）随之带入
+}
+```
+
+> 与下方手动 files() 方式的区别：Maven 坐标会自动解析传递依赖（无需再手写 `core-ktx`）。
+> 其余（`NativeSrs.initProjData` 初始化、宿主自行声明 `INTERNET` 权限、`NativeMapView` 用法）与
+> 「AAR 三步曲」的第二~四步完全一致。
+>
+> 发布由 `.github/workflows/publish-maven.yml` 完成（推 `v*` tag 或手动 dispatch：下载 Release 里的
+> `.a` 预置包 → 编 AAR → 部署到 `gh-pages:/maven`）。
+
+## 备选：手动引入 AAR 文件（无网络仓库时的“三步曲”）
 
 worldwindjni 以 **AAR 文件**方式集成，无需引入源码模块。
 
