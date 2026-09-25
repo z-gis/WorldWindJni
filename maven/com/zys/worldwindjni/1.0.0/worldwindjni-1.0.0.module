@@ -1,0 +1,103 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "com.zys",
+    "module": "worldwindjni",
+    "version": "1.0.0",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "9.4.1"
+    }
+  },
+  "variants": [
+    {
+      "name": "releaseVariantReleaseApiPublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-api"
+      },
+      "dependencies": [
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.4.0"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "worldwindjni-1.0.0.aar",
+          "url": "worldwindjni-1.0.0.aar",
+          "size": 17794290,
+          "sha512": "a01d4bd5766a88d516680fe0b113e5bc28dc9a109cb8cfdc76df7dfb2fcf994a7b106649f45475dad44932529ed9143515216450ad00533b8615bec55f925639",
+          "sha256": "641c060de501c0a71aa9c5064647468c21d384d3303d63f80a1246e0936f9c49",
+          "sha1": "0f03bed83a5f00be0872f790a93024433a47976d",
+          "md5": "173bfca7a877ed96a8d04af13d90331c"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseRuntimePublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-runtime"
+      },
+      "dependencies": [
+        {
+          "group": "androidx.core",
+          "module": "core-ktx",
+          "version": {
+            "requires": "1.10.1"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.4.0"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "worldwindjni-1.0.0.aar",
+          "url": "worldwindjni-1.0.0.aar",
+          "size": 17794290,
+          "sha512": "a01d4bd5766a88d516680fe0b113e5bc28dc9a109cb8cfdc76df7dfb2fcf994a7b106649f45475dad44932529ed9143515216450ad00533b8615bec55f925639",
+          "sha256": "641c060de501c0a71aa9c5064647468c21d384d3303d63f80a1246e0936f9c49",
+          "sha1": "0f03bed83a5f00be0872f790a93024433a47976d",
+          "md5": "173bfca7a877ed96a8d04af13d90331c"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseSourcePublication",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "worldwindjni-1.0.0-sources.jar",
+          "url": "worldwindjni-1.0.0-sources.jar",
+          "size": 29683,
+          "sha512": "c7d7df4fc9fd4efe54f120593d61da75596a27862d12ee8b269a91a8b177fa2cfa2fa65c75b823cfbcb8b1fcb1da9d4f452f56ddd857d04d04a0efaf101f713c",
+          "sha256": "732f9da912a4f590b36e3cecfac009a96c09836efecffab861dfcac2eef1262d",
+          "sha1": "0d40d0daf5fa19ec196d9ed0290f40e9a4c5dd58",
+          "md5": "c15489d5c29e29e05f2f9f811fff806b"
+        }
+      ]
+    }
+  ]
+}
