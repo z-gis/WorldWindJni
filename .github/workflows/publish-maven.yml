@@ -34,8 +34,13 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Accept Android SDK licenses
+        # ubuntu-latest 已预装 SDK/cmdline-tools；此处仅接受许可，platforms;android-37、
+        # ndk;28.2.x、cmake 等由 AGP 按需自动下载（避免 setup-android@v3 的 legacy 'tools' 包缺失问题）
+        run: |
+          SDKMGR="$(ls "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | head -1)"
+          yes | "$SDKMGR" --licenses > /dev/null 2>&1 || true
+          "$SDKMGR" --version && echo "sdkmanager ok"
 
       - name: Resolve release tag
         id: tag
