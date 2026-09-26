@@ -1,15 +1,18 @@
-#include <jni.h>
+// 图层四至 / 字段名 / 坐标系描述 —— 核心实现见 bridge_api.h（双平台共享），
+// Android JNI 导出为文末 #ifndef __OHOS__ 薄封装；鸿蒙侧由 napi_layer_info.cpp 调同一核心。
 #include <algorithm>
 #include <string>
+#include <vector>
 #include <cstring>
 #include <cctype>
-#include <android/log.h>
 
 #include "gdal/ogrsf_frmts.h"
 #include "gdal/gdal_priv.h"
 #include "gdal/cpl_conv.h"
 
 #include "srs_resolve.h"
+#include "bridge_api.h"
+#include "util/Log.h"
 
 // ==================== 图层四至与字段名（NativeLayerInfo 门面） ====================
 
@@ -59,8 +62,7 @@ static bool computeLayerExtent(const char *p, double extent[4]) {
                         }
                         OGRCoordinateTransformation::DestroyCT(ct);
                     } else {
-                        __android_log_print(ANDROID_LOG_ERROR, "LayerInfo",
-                                            "四至重投影失败：无法创建坐标变换（proj.db 未配置？），返回源坐标系四至");
+                        LOGE("四至重投影失败：无法创建坐标变换（proj.db 未配置？），返回源坐标系四至");
                     }
                 }
                 if (srs != nullptr) srs->Release();
@@ -103,8 +105,7 @@ static bool computeLayerExtent(const char *p, double extent[4]) {
                         OGRCoordinateTransformation::DestroyCT(ct);
                     } else {
                         if (ct != nullptr) OGRCoordinateTransformation::DestroyCT(ct);
-                        __android_log_print(ANDROID_LOG_ERROR, "LayerInfo",
-                                            "栅格四至重投影失败：无法创建坐标变换，返回源坐标系四至");
+                        LOGE("栅格四至重投影失败：无法创建坐标变换，返回源坐标系四至");
                     }
                 }
 
@@ -121,58 +122,37 @@ static bool computeLayerExtent(const char *p, double extent[4]) {
     return ok;
 }
 
-extern "C"
-JNIEXPORT jdoubleArray JNICALL
-Java_com_zys_worldwindjni_NativeLayerInfo_getLayerExtent(
-        JNIEnv *env, jobject thiz, jstring path) {
+namespace wwbridge {
 
+bool layerExtent(const std::string &path, double extent[4]) {
     GDALAllRegister();
-
-    const char *p = env->GetStringUTFChars(path, nullptr);
-    double extent[4] = {0, 0, 0, 0};
-    bool ok = computeLayerExtent(p, extent);
-    env->ReleaseStringUTFChars(path, p);
-
-    if (!ok) {
-        return nullptr;
-    }
-    jdoubleArray result = env->NewDoubleArray(4);
-    env->SetDoubleArrayRegion(result, 0, 4, extent);
-    return result;
+    return computeLayerExtent(path.c_str(), extent);
 }
 
-extern "C"
-JNIEXPORT jobjectArray JNICALL
-Java_com_zys_worldwindjni_NativeLayerInfo_getVectorFieldNames(
-        JNIEnv *env, jobject thiz, jstring path) {
-
+std::vector<std::string> vectorFieldNames(const std::string &path) {
     GDALAllRegister();
-
-    const char *p = env->GetStringUTFChars(path, nullptr);
-    jobjectArray result = nullptr;
+    std::vector<std::string> names;
 
     // OGR 读取第一个图层的字段定义（shp 取 DBF 字段，供整层样式标注字段下拉）
-    GDALDataset *ds = (GDALDataset *) GDALOpenEx(p, GDAL_OF_VECTOR | GDAL_OF_READONLY,
+    GDALDataset *ds = (GDALDataset *) GDALOpenEx(path.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY,
                                                  nullptr, nullptr, nullptr);
     if (ds != nullptr) {
         OGRLayer *layer = ds->GetLayer(0);
         if (layer != nullptr) {
             OGRFeatureDefn *defn = layer->GetLayerDefn();
             const int count = defn->GetFieldCount();
-            jclass stringClass = env->FindClass("java/lang/String");
-            result = env->NewObjectArray(count, stringClass, nullptr);
+            names.reserve(count);
             for (int i = 0; i < count; i++) {
-                jstring name = env->NewStringUTF(defn->GetFieldDefn(i)->GetNameRef());
-                env->SetObjectArrayElement(result, i, name);
-                env->DeleteLocalRef(name);
+                const char *name = defn->GetFieldDefn(i)->GetNameRef();
+                names.emplace_back(name != nullptr ? name : "");
             }
         }
         GDALClose(ds);
     }
-
-    env->ReleaseStringUTFChars(path, p);
-    return result;
+    return names;
 }
+
+} // namespace wwbridge
 
 /**
  * 图层原始坐标系描述（矢量优先，栅格兜底）：
@@ -243,21 +223,74 @@ static char *computeLayerSrs(const char *p) {
     return buf;
 }
 
+namespace wwbridge {
+
+std::string layerSrs(const std::string &path) {
+    GDALAllRegister();
+    char *srs = computeLayerSrs(path.c_str());
+    if (srs == nullptr) return "";
+    std::string out(srs);
+    CPLFree(srs);
+    return out;
+}
+
+} // namespace wwbridge
+
+// ── Android JNI 导出薄封装（com.zys.worldwindjni.NativeLayerInfo 门面）──
+#if !defined(__OHOS__)
+#include <jni.h>
+
+extern "C"
+JNIEXPORT jdoubleArray JNICALL
+Java_com_zys_worldwindjni_NativeLayerInfo_getLayerExtent(
+        JNIEnv *env, jobject /*thiz*/, jstring path) {
+
+    const char *p = env->GetStringUTFChars(path, nullptr);
+    if (p == nullptr) return nullptr;
+    double extent[4] = {0, 0, 0, 0};
+    const bool ok = wwbridge::layerExtent(p, extent);
+    env->ReleaseStringUTFChars(path, p);
+    if (!ok) {
+        return nullptr;
+    }
+    jdoubleArray result = env->NewDoubleArray(4);
+    env->SetDoubleArrayRegion(result, 0, 4, extent);
+    return result;
+}
+
+extern "C"
+JNIEXPORT jobjectArray JNICALL
+Java_com_zys_worldwindjni_NativeLayerInfo_getVectorFieldNames(
+        JNIEnv *env, jobject /*thiz*/, jstring path) {
+
+    const char *p = env->GetStringUTFChars(path, nullptr);
+    if (p == nullptr) return nullptr;
+    std::vector<std::string> names = wwbridge::vectorFieldNames(p);
+    env->ReleaseStringUTFChars(path, p);
+
+    jclass stringClass = env->FindClass("java/lang/String");
+    jobjectArray result = env->NewObjectArray(static_cast<jsize>(names.size()), stringClass, nullptr);
+    for (jsize i = 0; i < static_cast<jsize>(names.size()); i++) {
+        jstring name = env->NewStringUTF(names[i].c_str());
+        env->SetObjectArrayElement(result, i, name);
+        env->DeleteLocalRef(name);
+    }
+    return result;
+}
+
 extern "C"
 JNIEXPORT jstring JNICALL
 Java_com_zys_worldwindjni_NativeLayerInfo_getLayerSrs(
-        JNIEnv *env, jobject thiz, jstring path) {
-
-    GDALAllRegister();
+        JNIEnv *env, jobject /*thiz*/, jstring path) {
 
     const char *p = env->GetStringUTFChars(path, nullptr);
-    char *srs = computeLayerSrs(p);
+    if (p == nullptr) return nullptr;
+    std::string srs = wwbridge::layerSrs(p);
     env->ReleaseStringUTFChars(path, p);
-
-    if (srs == nullptr) {
+    if (srs.empty()) {
         return nullptr;
     }
-    jstring result = env->NewStringUTF(srs);
-    CPLFree(srs);
-    return result;
+    return env->NewStringUTF(srs.c_str());
 }
+
+#endif // !__OHOS__

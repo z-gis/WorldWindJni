@@ -3,9 +3,10 @@ plugins {
     id("maven-publish")
 }
 
-// worldwindjni 库版本与 Maven 坐标：与 GitHub Release tag（v1.0.0）保持一致
+// worldwindjni 库版本与 Maven 坐标：与 GitHub Release tag（v1.1.0）保持一致
+// 1.1.0：新增 HarmonyOS NEXT 双平台支持（引擎共享 + NAPI/EGL/ArkTS 鸿蒙侧），Android 功能零变化
 group = "com.zys"
-version = "1.0.0"
+version = "1.1.0"
 
 android {
     namespace = "com.zys.worldwindjni"

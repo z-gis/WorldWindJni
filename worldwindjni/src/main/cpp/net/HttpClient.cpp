@@ -32,6 +32,23 @@ int abortProgress(void *clientp, curl_off_t, curl_off_t, curl_off_t, curl_off_t)
 // Android 系统 CA 证书目录（OpenSSL 哈希命名的单个 PEM），供 CURLOPT_CAPATH 直接校验公有 CA
 constexpr const char *const kAndroidSystemCaPath = "/system/etc/security/cacerts";
 
+// 线程常驻 easy handle：libcurl 的连接缓存挂在 handle 上，请求结束不销毁 handle 即可跨瓦片
+// 复用同 host 的 TCP+TLS 连接（HTTP/1.1 keep-alive）。此前每块瓦片新建/销毁 handle，每块都要
+// 付 2~3 个 RTT 的握手代价，瓦片风暴（缩放/旋转到新区域数百块）下总时延成倍放大。
+// 线程退出时随 thread_local 析构自动 cleanup。
+struct ThreadCurl {
+    CURL *h = nullptr;
+    ThreadCurl() { h = curl_easy_init(); }
+    ~ThreadCurl() {
+        if (h != nullptr) curl_easy_cleanup(h);
+    }
+};
+
+inline CURL *threadHandle() {
+    static thread_local ThreadCurl tc;
+    return tc.h;
+}
+
 } // namespace
 
 bool HttpClient::globalInit() {
@@ -64,11 +81,12 @@ bool HttpClient::get(const std::string &url, std::vector<uint8_t> &outBytes, lon
                      const std::atomic<bool> *abortFlag) {
     if (!globalInit()) return false;
 
-    CURL *curl = curl_easy_init();
+    CURL *curl = threadHandle();
     if (curl == nullptr) {
         LOGE("curl_easy_init failed");
         return false;
     }
+    curl_easy_reset(curl); // 选项清回默认（含校验/回调），但保留 handle 内连接缓存——keep-alive 复用不丢
 
     outBytes.clear();
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
@@ -110,7 +128,7 @@ bool HttpClient::get(const std::string &url, std::vector<uint8_t> &outBytes, lon
 
     long httpCode = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
-    curl_easy_cleanup(curl);
+    // 刻意不 cleanup：handle 线程常驻，连接缓存跨请求复用（线程退出由 ThreadCurl 析构回收）
 
     if (rc != CURLE_OK) {
         // 主动中断（abort）属正常关机路径，降为 debug 级避免刷屏

@@ -1,26 +1,31 @@
 # WorldWindJni
 
-把 WorldWind 渲染内核下沉为 **C++ (JNI) 的独立 Android 地图渲染库**：Kotlin 侧仅保留轻量门面
-（`NativeMapView` 等），相机、瓦片网格、取瓦片与缓存、矢量读取/三角剖分、OpenGL ES 2.0 绘制
-全部在 native 完成，并内联编译了 GDAL/OGR、PROJ、libcurl 全套第三方静态库能力。
+把 WorldWind 渲染内核下沉为 **一套 C++ 共享渲染引擎，双平台产物**：Android 侧 Kotlin + **JNI/AAR**，
+HarmonyOS NEXT 侧 ArkTS + **NAPI/HAR**（1.1.0 新增，工程见 `worldwind-ohos/`，鸿蒙集成细节见文末同名章节）。
+门面层（`NativeMapView` 等）只做接口转发，相机、瓦片网格、取瓦片与缓存、矢量读取/三角剖分、
+OpenGL ES 2.0 绘制全部在 native 完成，并内联编译了 GDAL/OGR、PROJ、libcurl 全套第三方静态库能力。
 
+- **1.1.0**：新增 HarmonyOS NEXT（API 12 / 5.0.0）支持；两端共用引擎源（鸿蒙经 `WW_ENGINE_ROOT`
+  直接引用，不复制不搬迁）；Android 侧仅日志分派适配，API 与产物兼容 1.0.0
 - 支持 2D 平面墨卡托 / 3D WGS84 球体双视图模式
 - 瓦片图源（在线 URL 模板 + 磁盘缓存互通）、本地栅格（tif/img GDAL 重投影切片）
 - 矢量（shp/kml/kmz/dwg/dxf 等 OGR 可打开格式）直读、重投影、earcut 三角剖分、要素拾取
 - 动态叠加层（测量/轨迹/拍照标识等业务几何）、矢量标注（字形图集）、定位标记
-- PROJ 数据（proj.db 与格网改正数）随模块 assets 分发，宿主一行初始化
+- PROJ 数据（proj.db 与格网改正数）随模块分发（Android assets / 鸿蒙 rawfile），宿主一行初始化
 
 ## 仓库结构
 
 ```
 WorldWindJni/
-├── worldwindjni/                    # Android Library 模块（Kotlin 门面 + cpp 渲染内核）
+├── worldwindjni/                    # Android Library 模块（Kotlin 门面 + cpp 渲染内核；引擎源在此）
 │   └── src/main/cpp/
 │       ├── jniLibs/<abi>/           # 第三方预编译 .a（编译产物，不入仓，见「0 → 1 从零构建」）
 │       └── include/                 # 三方头（gdal/proj/curl/openssl/sqlite/zlib 由构建生成，不入仓）
 │                                    #   stb/ 与 earcut.cpp 为仓库自带 vendored 源，随仓提供
 ├── worldwind-tutorials/             # 功能演示 App（MainActivity 菜单逐项体验，project 依赖库模块）
-├── build-scripts/                   # 第三方静态库编译脚本（WSL/Linux + NDK r23b）
+├── worldwind-ohos/                  # HarmonyOS NEXT 工程（DevEco Studio 打开；library HAR + entry 演示 HAP）
+│   └── library/src/main/cpp/        #   鸿蒙专属源（EGL/XComponent/NAPI）+ 经 WW_ENGINE_ROOT 引用引擎源
+├── build-scripts/                   # 第三方静态库编译脚本（WSL/Linux；--target android|ohos 分派 NDK）
 └── gradle/ + 根构建脚本             # 独立 Gradle 工程（Gradle 9.4.1 / AGP 9.2.1）
 ```
 
@@ -32,8 +37,10 @@ Studio 才能编译通过：
 | 产物 | 位置 | 是否入仓 | 生成方式 |
 |---|---|---|---|
 | 第三方 `.a`（每 ABI 14 个） | `worldwindjni/src/main/cpp/jniLibs/{x86_64,arm64-v8a}/` | ❌ | `build-all.sh` |
-| 三方头文件 | `worldwindjni/src/main/cpp/include/{gdal,proj,curl,openssl,sqlite}`、`zlib.h`/`zconf.h` | ❌ | `build-all.sh`（install_headers） |
+| 三方头文件 | `worldwindjni/src/main/cpp/include/{gdal,proj,curl,openssl,sqlite}`、`zlib.h`/`zconf.h` | ❌ | `build-all.sh`（install_headers，双平台共用） |
 | PROJ 运行期数据 | `worldwindjni/src/main/assets/proj/`（proj.db 等） | ❌ | `build-all.sh`（install_proj_data） |
+| 鸿蒙第三方 `.a`（每 ABI 14 个） | `build-scripts/out/ohos/{arm64-v8a,x86_64}/` | ❌ | `build-all.sh --target ohos` |
+| 鸿蒙 PROJ 运行期数据 | `worldwind-ohos/library/src/main/resources/rawfile/proj/` | ❌ | 同上（install_proj_data 按平台落位） |
 
 native 构建需要每 ABI 14 个 `.a`（约 450MB/ABI，其中 libgdal.a 约 330MB），体积过大不随仓库分发：
 
@@ -62,6 +69,7 @@ unzip worldwindjni-prebuilt-libs-v1.0.0.zip   # 产物落入 cpp/jniLibs、cpp/i
 
 > 直链：<https://github.com/z-gis/WorldWindJni/releases/download/v1.0.0/worldwindjni-prebuilt-libs-v1.0.0.zip>
 > 该包由路径 B 的 `build-all.sh` 产出后打包，若你更新了三方库版本，请用路径 B 重编并同步更新 Release。
+> 1.1.0 未变更任何三方库版本，该包对 Android 1.1.0 依然有效；鸿蒙 `.a` 需另跑路径 B 的 `--target ohos`。
 
 ### 路径 B：用 build-scripts 一键自行编译（推荐）
 
@@ -89,6 +97,13 @@ bash build-all.sh
   落回挂载盘上的 `jniLibs/`、`include/`、`assets/proj/`。
 - 可离线复用：把已下载的 `*.tar.gz`/`*.zip` 与 `boost/` 头放进 `build-scripts/third-party/`
   （`PKG_CACHE`），脚本会 `cp -n` 种入工作区，避免重复下载。
+- **鸿蒙产物**：把 `--target ohos` 追加到任一命令即可（`bash build-all.sh --target ohos`），
+  ABI 换为 `arm64-v8a`（真机）+ `x86_64`（DevEco 模拟器），工具链改用 OHOS NDK。
+  华为侧 NDK 需登录账号下载，脚本只探测不自动下载：解压 Command Line Tools SDK 里的
+  `.../sdk/default/openharmony/native` 后 `export OHOS_NDK_ROOT=<路径>/openharmony/native`
+  （或放入 `build-scripts/ndk/` 下），探测口径 `llvm/bin/clang` + `build/cmake/ohos.toolchain.cmake`。
+  产物落 `build-scripts/out/ohos/<abi>/`，三方头与 `assets/proj` ↔ `rawfile/proj` 按平台自动分流，
+  与 Android 产物目录完全隔离、可重复交叉构建。
 
 各源码包版本（须与生成头文件配套）：
 
@@ -146,13 +161,13 @@ android {
     }
 }
 dependencies {
-    implementation("com.zys:worldwindjni:1.0.0")   // 自动下载；传递依赖（androidx core-ktx）随之带入
+    implementation("com.zys:worldwindjni:1.1.0")   // 自动下载；传递依赖（androidx core-ktx）随之带入
 }
 ```
 
 > 注意：仓库地址要加在 **`dependencyResolutionManagement.repositories`**（解析 `implementation` 依赖用）；
 > 只加进 `pluginManagement.repositories` 不对——那处只管 Gradle 插件，坐标会报
-> `Could not find com.zys:worldwindjni:1.0.0`。本仓库的 `worldwind-tutorials` 演示模块同样按此配置，
+> `Could not find com.zys:worldwindjni:x.y.z`。本仓库的 `worldwind-tutorials` 演示模块同样按此配置，
 > 把 `implementation(project(":worldwindjni"))` 换成上面的 Maven 坐标即可验证“外部消费者”体验。
 >
 > 与下方手动 files() 方式的区别：Maven 坐标会自动解析传递依赖（无需再手写 `core-ktx`）。
@@ -270,7 +285,8 @@ map.setViewMode(NativeMapView.ViewMode.THREE_D)  // 与 2D 共用相机状态，
 
 ```kotlin
 // OGR 可打开的任意格式；样式颜色为 #AARRGGBB 打包 Int；异步读取+三角剖分，就绪自动重绘
-val idx = map.addVectorLayer(path, style /* VectorStyle */, ...)
+// （后续参数：图标像素/尺寸、加载范围、要素上限，均有默认值）
+val idx = map.addVectorLayer(path, style /* VectorStyle */)
 
 map.setOnTapListener { x, y ->
     val hit = map.pickVector(x, y)                       // [layerIndex, fid]，未命中 null
@@ -310,6 +326,127 @@ gradlew.bat :worldwind-tutorials:assembleDebug
 ```
 
 底图默认用 OSM 公共瓦片（免 token，需联网），可在 `TileSources.kt` 换成自有图源。
+
+## 鸿蒙 HarmonyOS NEXT 集成（1.1.0 新增）
+
+### 架构与对应关系
+
+HarmonyOS NEXT（API 12 / 5.0.0，纯血鸿蒙，无 AOSP 兼容层）下引擎同一套 C++ 源直接参与编译，
+平台差异收敛为三类适配点：
+
+| 职责 | Android | HarmonyOS NEXT |
+|---|---|---|
+| 引擎源 | `worldwindjni/src/main/cpp/*` | 经 CMake 变量 `WW_ENGINE_ROOT` 直接引用同一目录，不复制不搬迁 |
+| 日志 | `android/log` | hilog（`Log.h` 按 `__OHOS__` 分派，引擎其余代码零平台 `#ifdef`） |
+| GL 宿主 | Kotlin `GLSurfaceView` 转发 surface 生命周期 | `XComponent(SURFACE)` + native EGL 渲染线程（`ohos/EglContext`、`ohos/XComponentBridge`），渲染后端仍为 GLES（向下兼容 ES 2.0 绘制指令，`render/` 层零重写） |
+| 桥接 | JNI（`WorldWindowJni.cpp`） | NAPI（`ohos/napi_*.cpp`，导出清单与 JNI 一一对应） |
+| 门面 | Kotlin `com.zys.worldwindjni` | ArkTS HAR `worldwind`（`worldwind-ohos/library`，类名/方法名/参数序完整对齐） |
+| 资源 | AAR `assets/proj` | HAR `resources/rawfile/proj`（均经 `NativeSrs.initProjData` 解压到沙箱 `filesDir/proj`） |
+| 产物 | AAR（`com.zys:worldwindjni`） | HAR（`worldwind`，so 名 `libworldwind.so`） |
+
+### 集成三步曲（对齐 Android 侧口径）
+
+**第一步：引入 HAR** —— 把 `worldwind.har`（DevEco `Build Module → Make Module HAR` 产出）放入宿主，
+`oh-package.json5` 声明依赖（源码仓库直接引用时也可 `file:` 指向 `library` 模块）：
+
+```json5
+// oh-package.json5
+{
+  "dependencies": {
+    "worldwind": "file:./libs/worldwind.har"
+  }
+}
+```
+
+**第二步：声明权限** —— 取瓦片走 native libcurl，宿主 `module.json5` 自行声明（HAR 不携权限）：
+
+```json5
+// module.json5（module 节内）
+{
+  "requestPermissions": [{ "name": "ohos.permission.INTERNET" }]
+}
+```
+
+**第三步：启动初始化** —— Ability `onCreate` 里调一次（幂等；首次坐标转换/栅格重投影之前）：
+
+```typescript
+import { NativeSrs } from 'worldwind';
+
+// 解压 HAR rawfile/proj 到 filesDir/proj 并配置 PROJ 搜索路径（this.context 为 UIAbilityContext）
+NativeSrs.initProjData(this.context);
+```
+
+未初始化时坐标转换按既有口径返回 `null`（不崩溃）；验证集成：
+
+```typescript
+NativeSrs.convert(116.4, 39.9, 'EPSG:4326', 'EPSG:3857')  // 非 null 即成功
+```
+
+### 地图接入最小路径
+
+`NativeMapView` 是 `@Component` struct（**不可 `new`**）：声明在 `build()` 里，组件引用经 `onReady`
+回调挂载后再驱动 API（相机/图层可在 XComponent 就绪前设置，native 句柄在组件
+`aboutToAppear` 已创建）：
+
+```typescript
+import { NativeMapView, Camera, ViewMode } from 'worldwind';
+
+@Entry
+@Component
+struct MapPage {
+  private mapView: NativeMapView | undefined = undefined;
+
+  private initMap(view: NativeMapView): void {
+    this.mapView = view;
+    view.addTileLayer(`${getContext(this).filesDir}/tiles/osm`,
+      'https://tile.openstreetmap.org/{z}/{x}/{y}.png', 19);
+    view.setCamera(new Camera(39.9, 116.4, 3000000.0));
+    view.setViewMode(ViewMode.THREE_D);
+  }
+
+  build() {
+    NativeMapView({
+      density: 1.0,
+      onReady: (v: NativeMapView): void => {
+        this.initMap(v);
+      },
+    })
+      .width('100%').height('100%')
+  }
+}
+```
+
+其余 API（矢量/栅格/叠加层/拾取/定位标记/手势）与 Kotlin 侧逐一对应，参「API 概览与快速上手」；
+生命周期无需手动 onPause/onResume：native EGL 线程随 XComponent 加载/卸载自动 attach/detach。
+
+### 演示工程 worldwind-ohos
+
+DevEco Studio（5.0+，API 12 SDK）打开 `worldwind-ohos/`，`ohpm install` 后直接 run `entry`：
+清单页 `Index` 六项（底图 / 3D / 矢量 / 叠加层 / 定位标记 / 坐标转换）路由到综合演示页
+`MapDemoPage`，能力口径对齐 `worldwind-tutorials`。矢量/栅格样例文件经 hdc 推送到应用沙箱
+`filesDir` 即自动被演示页发现：
+
+```bat
+hdc file send D:\data\sample.shp /data/app/el2/100/base/com.zys.worldwind.ohos/files/sample.shp
+```
+
+（需开发者模式 + root / `hdc shell mount -o remount,rw`；无样例文件时底图功能不受影响，仅 toast 提示。）
+
+编译前提：先完成「0 → 1」鸿蒙分支（`build-all.sh --target ohos` 产出 `build-scripts/out/ohos`），
+否则 CMake 报找不到 `.a`。常见问题：
+- **`cannot find -lxxx` / IMPORTED 库不存在**：鸿蒙 `.a` 未产出，或 ABI 目录名与 `OHOS_ARCH` 不一致。
+- **`dlopen failed: libworldwind.so`**：HAR 打包未含目标 ABI 的 so；真机 `arm64-v8a`，模拟器 `x86_64`。
+- **坐标转换全部返回 null**：漏了第三步 `initProjData`；升级 PROJ 数据需先清应用数据（解压按
+  「文件已存在即跳过」）。
+- **日志查看**：`hdc shell hilog | findstr WorldWind`（引擎 `Log.h` 鸿蒙分支统一走 hilog）。
+
+## 版本说明
+
+- **1.1.0（当前）**：新增 HarmonyOS NEXT 双平台支持（`worldwind-ohos` 工程 + `build-scripts --target ohos`）；
+  Android 侧仅 `Log.h` 平台分派适配，API/ABI/产物与 1.0.0 完全兼容；三方库版本未变更。
+  GitHub Release tag `v1.1.0` 与 Maven `com.zys:worldwindjni:1.1.0` 发布随本次改造一并打点（发布流程
+  见 `.github/workflows/publish-maven.yml`）。
+- **1.0.0**：Android 单平台首个正式版（AAR + Maven 仓 + prebuilt-libs 产物包）。
 
 ## 许可与第三方声明
 

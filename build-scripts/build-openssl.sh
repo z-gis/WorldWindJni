@@ -5,7 +5,7 @@
 #   $PREFIX/include/openssl/*.h
 # 不单独进 jniLibs：libcurl.a 会把这些静态目标合并进去（见 build-curl.sh）。
 #
-# 依赖 build_one_abi 注入的环境变量：ABI PREFIX NDK_ROOT TOOLCHAIN API HOST CC MAIN_DIR BASE_PATH。
+# 依赖 build_one_abi 注入的环境变量：ABI PREFIX NDK_ROOT(仅 android) TOOLCHAIN API HOST CC TARGET。
 # 源码包 openssl-$OPENSSL_VER.tar.gz 缺失时自动下载（可多镜像回退），下载/解压都落在 $MAIN_DIR。
 
 OPENSSL_VER=${OPENSSL_VER:-1.1.1w}
@@ -46,31 +46,53 @@ fi
 cd "$SRC_DIR"
 
 # —— 目标平台名（OpenSSL Configure 用）——
-case "$ABI" in
-  x86_64)    SSL_TARGET="android-x86_64" ;;
-  arm64-v8a) SSL_TARGET="android-arm64"  ;;
-  *) echo "[openssl] 不支持的 ABI：$ABI"; exit 1 ;;
-esac
+# ohos 无官方 Configure 目标，映射到同架构 linux-* 目标（clang --target/--sysroot 由
+# build_one_abi 注入的 CC wrapper 提供，musl 下 gnu 工具链路径兼容）
+if [ "$TARGET" = "ohos" ]; then
+  case "$ABI" in
+    x86_64)    SSL_TARGET="linux-x86_64" ;;
+    arm64-v8a) SSL_TARGET="linux-aarch64" ;;
+    *) echo "[openssl] 不支持的 OHOS ABI：$ABI"; exit 1 ;;
+  esac
+else
+  case "$ABI" in
+    x86_64)    SSL_TARGET="android-x86_64" ;;
+    arm64-v8a) SSL_TARGET="android-arm64"  ;;
+    *) echo "[openssl] 不支持的 ABI：$ABI"; exit 1 ;;
+  esac
+fi
 
-# —— 交叉环境：NDK clang 入 PATH，显式给 CC/AR/RANLIB/NM ——
-export ANDROID_NDK_ROOT="$NDK_ROOT"
-export ANDROID_NDK_HOME="$NDK_ROOT"   # openssl 1.1.1 的 android 配置读 ANDROID_NDK_HOME
-export ANDROID_DEV="$TOOLCHAIN/sysroot/usr"
+# —— 交叉环境 ——
 export PATH="$TOOLCHAIN/bin:$PATH"
-export CC="$TOOLCHAIN/bin/${HOST}${API}-clang"
-export CXX="$TOOLCHAIN/bin/${HOST}${API}-clang++"
-export AR="$TOOLCHAIN/bin/llvm-ar"
-export RANLIB="$TOOLCHAIN/bin/llvm-ranlib"
-export NM="$TOOLCHAIN/bin/llvm-nm"
-export STRIP="$TOOLCHAIN/bin/llvm-strip"
+export AR="${AR:-$TOOLCHAIN/bin/llvm-ar}"
+export RANLIB="${RANLIB:-$TOOLCHAIN/bin/llvm-ranlib}"
+export NM="${NM:-$TOOLCHAIN/bin/llvm-nm}"
+export STRIP="${STRIP:-$TOOLCHAIN/bin/llvm-strip}"
+if [ "$TARGET" != "ohos" ]; then
+  # android：NDK 环境变量 + 显式 clang wrapper（历史行为不变）
+  export ANDROID_NDK_ROOT="$NDK_ROOT"
+  export ANDROID_NDK_HOME="$NDK_ROOT"   # openssl 1.1.1 的 android 配置读 ANDROID_NDK_HOME
+  export ANDROID_DEV="$TOOLCHAIN/sysroot/usr"
+  export CC="$TOOLCHAIN/bin/${HOST}${API}-clang"
+  export CXX="$TOOLCHAIN/bin/${HOST}${API}-clang++"
+fi
+# ohos：CC/CXX 已由 build_one_abi 注入（带 --target/--sysroot 的 wrapper），不再覆盖
 
 # 两遍 ABI 复用同一份源码目录：先 distclean 清掉上一 ABI 的构建缓存，避免串味
 make distclean >/dev/null 2>&1 || true
 
-./Configure "$SSL_TARGET" \
-  --prefix="$PWD/_install" --openssldir="$PWD/_install/ssl" \
-  -D__ANDROID_API__="$API" \
-  no-shared no-tests no-engine no-comp no-ui-console
+if [ "$TARGET" = "ohos" ]; then
+  # linux-* 目标下 openssl 尊重环境变量 CC（即 build_one_abi 注入的 clang wrapper），
+  # 无需 --cross-compile-prefix；musl 下不需 API 宏
+  ./Configure "$SSL_TARGET" \
+    --prefix="$PWD/_install" --openssldir="$PWD/_install/ssl" \
+    no-shared no-tests no-engine no-comp no-ui-console
+else
+  ./Configure "$SSL_TARGET" \
+    --prefix="$PWD/_install" --openssldir="$PWD/_install/ssl" \
+    -D__ANDROID_API__="$API" \
+    no-shared no-tests no-engine no-comp no-ui-console
+fi
 
 # 只编静态库，跳过 apps/openssl 命令行与文档（更快，也避免装 app）
 make -j"$(nproc)" build_libs

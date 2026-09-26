@@ -1,11 +1,13 @@
-#include <jni.h>
-#include <android/log.h>
-
+// PROJ 初始化 / 坐标转换 / 版本 —— 核心实现见 bridge_api.h（双平台共享），
+// Android JNI 导出为文末 #ifndef __OHOS__ 薄封装；鸿蒙侧由 napi_srs.cpp 调同一核心。
 #include <map>
 #include <mutex>
 #include <string>
 
 #include "proj/proj.h"
+
+#include "bridge_api.h"
+#include "util/Log.h"
 
 // ==================== PROJ 初始化 / 坐标转换 / 版本 ====================
 
@@ -42,75 +44,98 @@ static PJ *getCachedPipelineLocked(const std::string &src, const std::string &tg
     }
     if (pj == nullptr) {
         int err = proj_context_errno(ctx);
-        __android_log_print(ANDROID_LOG_ERROR, "PROJ",
-                            "proj_create_crs_to_crs failed: %s -> %s, error=%d: %s",
-                            src.c_str(), tgt.c_str(), err, proj_context_errno_string(ctx, err));
+        LOGE("proj_create_crs_to_crs failed: %s -> %s, error=%d: %s",
+             src.c_str(), tgt.c_str(), err, proj_context_errno_string(ctx, err));
         return nullptr;
     }
     g_pjCache[key] = pj;
     return pj;
 }
 
-extern "C"
-JNIEXPORT jint JNICALL
-Java_com_zys_worldwindjni_NativeSrs_getProjVersion(JNIEnv *env,
-                                                                jobject thiz) {
+namespace wwbridge {
+
+int projVersion() {
     const PJ_INFO info = proj_info();
-    return static_cast<jint>(info.major * 10000 + info.minor * 100 + info.patch);
+    return info.major * 10000 + info.minor * 100 + info.patch;
 }
 
-// 设置全局 PROJ 上下文的 proj.db 搜索路径（数据目录由宿主应用解压 assets 后传入），并做一次 EPSG:4326 建管道校验。
-static void applyProjSearchPath(JNIEnv *env, jstring proj_data_path) {
-    const char *path = env->GetStringUTFChars(proj_data_path, nullptr);
+void initProjDataPath(const std::string &path) {
     PJ_CONTEXT *ctx = getProjContext();
-    proj_context_set_search_paths(ctx, 1, &path);
+    const char *cPath = path.c_str();
+    proj_context_set_search_paths(ctx, 1, &cPath);
 
     PJ *test = proj_create(ctx, "EPSG:4326");
     if (test) {
-        __android_log_print(ANDROID_LOG_INFO, "PROJ", "proj.db loaded OK from: %s", path);
+        LOGI("proj.db loaded OK from: %s", cPath);
         proj_destroy(test);
     } else {
-        __android_log_print(ANDROID_LOG_ERROR, "PROJ",
-                            "Failed to load proj.db from: %s, error: %s",
-                            path, proj_context_errno_string(ctx, proj_context_errno(ctx)));
+        LOGE("Failed to load proj.db from: %s, error: %s",
+             cPath, proj_context_errno_string(ctx, proj_context_errno(ctx)));
     }
-    env->ReleaseStringUTFChars(proj_data_path, path);
+}
+
+bool convert(double x, double y, const std::string &srcCrs, const std::string &tgtCrs,
+             double &outX, double &outY) {
+    std::lock_guard<std::mutex> lock(g_pjMutex);
+    PJ *pj = getCachedPipelineLocked(srcCrs, tgtCrs);
+    if (pj == nullptr) return false;
+    PJ_COORD out_coord = proj_trans(pj, PJ_FWD, proj_coord(x, y, 0, 0));
+    if (proj_errno(pj)) {
+        proj_errno_reset(pj);
+        return false;
+    }
+    outX = out_coord.xy.x;
+    outY = out_coord.xy.y;
+    return true;
+}
+
+} // namespace wwbridge
+
+// ── Android JNI 导出薄封装（com.zys.worldwindjni.NativeSrs 门面）──
+#if !defined(__OHOS__)
+#include <jni.h>
+
+extern "C"
+JNIEXPORT jint JNICALL
+Java_com_zys_worldwindjni_NativeSrs_getProjVersion(JNIEnv * /*env*/, jobject /*thiz*/) {
+    return static_cast<jint>(wwbridge::projVersion());
 }
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_zys_worldwindjni_NativeSrs_initProjDataPath(JNIEnv *env,
-                                                                   jobject thiz,
-                                                                   jstring proj_data_path) {
-    applyProjSearchPath(env, proj_data_path);
+Java_com_zys_worldwindjni_NativeSrs_initProjDataPath(JNIEnv *env, jobject /*thiz*/,
+                                                     jstring proj_data_path) {
+    const char *path = env->GetStringUTFChars(proj_data_path, nullptr);
+    if (path == nullptr) return;
+    wwbridge::initProjDataPath(path);
+    env->ReleaseStringUTFChars(proj_data_path, path);
 }
 
 extern "C"
 JNIEXPORT jdoubleArray JNICALL
 Java_com_zys_worldwindjni_NativeSrs_convert(
-        JNIEnv *env, jobject thiz,
+        JNIEnv *env, jobject /*thiz*/,
         jdouble x, jdouble y,
         jstring src_crs, jstring tgt_crs) {
 
     const char *src = env->GetStringUTFChars(src_crs, nullptr);
     const char *tgt = env->GetStringUTFChars(tgt_crs, nullptr);
-    std::string srcCrs(src);
-    std::string tgtCrs(tgt);
+    if (src == nullptr || tgt == nullptr) {
+        if (src) env->ReleaseStringUTFChars(src_crs, src);
+        if (tgt) env->ReleaseStringUTFChars(tgt_crs, tgt);
+        return nullptr;
+    }
+    double outX = 0.0;
+    double outY = 0.0;
+    const bool ok = wwbridge::convert(x, y, src, tgt, outX, outY);
     env->ReleaseStringUTFChars(src_crs, src);
     env->ReleaseStringUTFChars(tgt_crs, tgt);
-
-    jdoubleArray result = nullptr;
-    std::lock_guard<std::mutex> lock(g_pjMutex);
-    PJ *pj = getCachedPipelineLocked(srcCrs, tgtCrs);
-    if (pj != nullptr) {
-        PJ_COORD out_coord = proj_trans(pj, PJ_FWD, proj_coord(x, y, 0, 0));
-        if (!proj_errno(pj)) {
-            jdouble vals[2] = {out_coord.xy.x, out_coord.xy.y};
-            result = env->NewDoubleArray(2);
-            env->SetDoubleArrayRegion(result, 0, 2, vals);
-        } else {
-            proj_errno_reset(pj);
-        }
-    }
+    if (!ok) return nullptr;
+    jdoubleArray result = env->NewDoubleArray(2);
+    if (result == nullptr) return nullptr;
+    const jdouble vals[2] = {outX, outY};
+    env->SetDoubleArrayRegion(result, 0, 2, vals);
     return result;
 }
+
+#endif // !__OHOS__

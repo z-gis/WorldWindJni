@@ -60,6 +60,10 @@ int WorldWindow::viewMode() const {
     return navigator_.viewMode() == Navigator::ViewMode::MODE_3D ? 1 : 0;
 }
 
+int WorldWindow::viewportHeight() const {
+    return navigator_.viewportHeight();
+}
+
 void WorldWindow::panByPixels(double dxPx, double dyPx) {
     navigator_.panByPixels(dxPx, dyPx);
 }

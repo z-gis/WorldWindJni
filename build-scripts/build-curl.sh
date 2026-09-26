@@ -6,7 +6,8 @@
 # 再用 NDK clang 部分链接（-r --whole-archive）把 libssl.a + libcrypto.a 合并进 libcurl.a ——
 # 产出一个自含 OpenSSL 的 libcurl.a（与历史 jniLibs 里的 libcurl.a 同构：链接时只需 -lcurl，zlib 由 zstatic 提供）。
 #
-# 依赖环境变量：ABI PREFIX NDK_ROOT TOOLCHAIN API CC MAIN_DIR BASE_PATH PKG_CACHE
+# 依赖环境变量：ABI PREFIX NDK_ROOT TOOLCHAIN API CC MAIN_DIR BASE_PATH PKG_CACHE TARGET
+#               WW_CMAKE_TARGET_ARGS（build-all.sh 按 TARGET 注入：android/ohos 工具链参数）
 
 CURL_VER=${CURL_VER:-8.4.0}
 CURL_DOTTED="$CURL_VER"                              # 8.4.0
@@ -45,24 +46,21 @@ if [ ! -d "$SRC_DIR" ]; then
   tar xzf "$CURL_TARBALL"
   [ "$top" != "$SRC_DIR" ] && mv "$top" "$SRC_DIR"
 fi
-CMAKE_TOOLCHAIN="$NDK_ROOT/build/cmake/android.toolchain.cmake"
-[ -f "$CMAKE_TOOLCHAIN" ] || { echo "[curl] 找不到 NDK android.toolchain.cmake：$CMAKE_TOOLCHAIN"; exit 1; }
+# 目标工具链参数由 build-all.sh 按 TARGET 注入（ohos 时 NDK_ROOT 不存在，不得引用）
+[ -n "${WW_CMAKE_TARGET_ARGS:-}" ] || { echo "[curl] WW_CMAKE_TARGET_ARGS 未注入，请经 build-all.sh 调用"; exit 1; }
 
 # —— 源码绝对路径（供后续头文件复制与 cmake 源目录引用）——
 SRC_ABS="$MAIN_DIR/$SRC_DIR"
 
-# —— 按 ABI 隔离的构建目录（置于源码目录之外，避免污染源码树）——
-BUILD_DIR="$SRC_ABS/build_android_$ABI"
+# —— 按目标平台+ABI 隔离的构建目录（置于源码目录之外，避免污染源码树）——
+BUILD_DIR="$SRC_ABS/build_${TARGET}_$ABI"
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
 
 CMDCMAKE="${CMAKE:-cmake}"
 "$CMDCMAKE" "$SRC_ABS" \
-  -DCMAKE_TOOLCHAIN_FILE="$CMAKE_TOOLCHAIN" \
-  -DANDROID_ABI="$ABI" \
-  -DANDROID_PLATFORM=android-"$API" \
-  -DANDROID_NDK="$NDK_ROOT" \
+  $WW_CMAKE_TARGET_ARGS \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
   -DBUILD_SHARED_LIBS=OFF \

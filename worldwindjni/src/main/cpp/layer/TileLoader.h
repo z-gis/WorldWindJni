@@ -43,7 +43,7 @@ public:
         std::vector<uint8_t> bytes;
     };
 
-    explicit TileLoader(TileCache &cache, int numThreads = 4);
+    explicit TileLoader(TileCache &cache, int numThreads = 8);
     ~TileLoader();
 
     TileLoader(const TileLoader &) = delete;

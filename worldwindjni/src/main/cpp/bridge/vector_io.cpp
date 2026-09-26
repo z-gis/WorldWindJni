@@ -1,4 +1,6 @@
-#include <jni.h>
+// 矢量要素读取 / SQL 查询 / 统计 / 属性读写（GDAL/OGR → JSON）—— 核心实现见 bridge_api.h
+// （双平台共享，JSON 文本作传输格式），Android JNI 导出为文末 #ifndef __OHOS__ 薄封装；
+// 鸿蒙侧由 napi_vector_io.cpp 调同一核心。
 #include <string>
 #include <vector>
 #include <cstdio>
@@ -12,13 +14,14 @@
 #include <list>
 #include <unordered_map>
 #include <sys/stat.h>
-#include <android/log.h>
 
 #include "gdal/ogrsf_frmts.h"
 #include "gdal/gdal_priv.h"
 #include "gdal/cpl_error.h"
 
 #include "srs_resolve.h"
+#include "bridge_api.h"
+#include "util/Log.h"
 
 // ==================== 矢量要素读取（GDAL/OGR -> JSON，NativeVector 门面） ====================
 
@@ -307,9 +310,8 @@ static void emitLayerFeatures(std::string &out, OGRLayer *layer, const char *pat
         if (ct == nullptr) {
             // 创建失败（常见：proj.db 搜索路径未配置）时坐标将按源坐标系原样输出，
             // 投影米制被当经纬度渲染导致位置错误，必须提示而非静默
-            __android_log_print(ANDROID_LOG_ERROR, "NativeVector",
-                                "图层[%s]创建坐标变换失败（proj.db 未配置？），坐标将按源坐标系原样输出",
-                                layer->GetName());
+            LOGE("图层[%s]创建坐标变换失败（proj.db 未配置？），坐标将按源坐标系原样输出",
+                 layer->GetName());
         }
     }
 
@@ -342,16 +344,14 @@ static void emitLayerFeatures(std::string &out, OGRLayer *layer, const char *pat
             // 无 SRS 时 haveWgs84Ext=false，不预判不过滤（退化全量读取）
         }
         if (haveWgs84Ext) {
-            __android_log_print(ANDROID_LOG_INFO, "NativeVector",
-                                "[DIAG] layer[%s] WGS84 extent=[%.6f,%.6f,%.6f,%.6f] vs screen=[%.6f,%.6f,%.6f,%.6f]",
-                                layer->GetName(), lMinLon, lMinLat, lMaxLon, lMaxLat,
-                                minLon, minLat, maxLon, maxLat);
+            LOGI("[DIAG] layer[%s] WGS84 extent=[%.6f,%.6f,%.6f,%.6f] vs screen=[%.6f,%.6f,%.6f,%.6f]",
+                 layer->GetName(), lMinLon, lMinLat, lMaxLon, lMaxLat,
+                 minLon, minLat, maxLon, maxLat);
             // 防线 1：矩形不相交判定（容许边界接触）
             if (lMaxLon < minLon || lMinLon > maxLon || lMaxLat < minLat || lMinLat > maxLat) {
                 skipLayer = true;
-                __android_log_print(ANDROID_LOG_INFO, "NativeVector",
-                                    "[DIAG] layer[%s] disjoint from screen -> SKIP whole layer (0 features)",
-                                    layer->GetName());
+                LOGI("[DIAG] layer[%s] disjoint from screen -> SKIP whole layer (0 features)",
+                     layer->GetName());
             } else if (haveRawExt) {
                 // 防线 2：比例映射构造源坐标系过滤 box，喂给 SetSpatialFilterRect（走 .qix 索引）
                 double fMinX, fMinY, fMaxX, fMaxY;
@@ -394,11 +394,10 @@ static void emitLayerFeatures(std::string &out, OGRLayer *layer, const char *pat
                 }
                 if (fMaxX > fMinX && fMaxY > fMinY) {
                     layer->SetSpatialFilterRect(fMinX, fMinY, fMaxX, fMaxY);
-                    __android_log_print(ANDROID_LOG_INFO, "NativeVector",
-                                        "[DIAG] layer[%s] SetSpatialFilterRect src=[%.3f,%.3f,%.3f,%.3f] "
-                                        "(fx=[%.4f,%.4f] fy=[%.4f,%.4f] buf=15%%+500m)",
-                                        layer->GetName(), fMinX, fMinY, fMaxX, fMaxY,
-                                        fx1, fx2, fy1, fy2);
+                    LOGI("[DIAG] layer[%s] SetSpatialFilterRect src=[%.3f,%.3f,%.3f,%.3f] "
+                         "(fx=[%.4f,%.4f] fy=[%.4f,%.4f] buf=15%%+500m)",
+                         layer->GetName(), fMinX, fMinY, fMaxX, fMaxY,
+                         fx1, fx2, fy1, fy2);
                 }
             }
         }
@@ -452,10 +451,9 @@ static void emitLayerFeatures(std::string &out, OGRLayer *layer, const char *pat
                     if (!firstLogged) {
                         OGREnvelope ge;
                         geom->getEnvelope(&ge);
-                        __android_log_print(ANDROID_LOG_INFO, "NativeVector",
-                                            "[DIAG] layer[%s] first emit fid=%lld WGS84 envelope=[%.6f,%.6f,%.6f,%.6f]",
-                                            layer->GetName(), (long long) feat->GetFID(),
-                                            ge.MinX, ge.MinY, ge.MaxX, ge.MaxY);
+                        LOGI("[DIAG] layer[%s] first emit fid=%lld WGS84 envelope=[%.6f,%.6f,%.6f,%.6f]",
+                             layer->GetName(), (long long) feat->GetFID(),
+                             ge.MinX, ge.MinY, ge.MaxX, ge.MaxY);
                         firstLogged = true;
                     }
                     // Phase 5：几何简化（Douglas-Peucker）——重投影到 WGS84 后按容差简化顶点，
@@ -476,10 +474,9 @@ static void emitLayerFeatures(std::string &out, OGRLayer *layer, const char *pat
             }
             OGRFeature::DestroyFeature(feat);
         }
-        __android_log_print(ANDROID_LOG_INFO, "NativeVector",
-                            "[DIAG] layer[%s] emit done candidates=%d count=%d skippedByBox=%d truncated=%d tolerance=%.7f",
-                            layer->GetName(), candidates, count, skippedByBox, truncated ? 1 : 0,
-                            g_vertexTolerance);
+        LOGI("[DIAG] layer[%s] emit done candidates=%d count=%d skippedByBox=%d truncated=%d tolerance=%.7f",
+             layer->GetName(), candidates, count, skippedByBox, truncated ? 1 : 0,
+             g_vertexTolerance);
     }
 
     // 清理本层设置的空间过滤，避免影响同一 dataset 的其他图层（如 dwg 多子图层）
@@ -495,25 +492,14 @@ static void emitLayerFeatures(std::string &out, OGRLayer *layer, const char *pat
     }
 }
 
-extern "C"
-JNIEXPORT jstring JNICALL
-Java_com_zys_worldwindjni_NativeVector_readVectorFeatures(
-        JNIEnv *env, jobject thiz, jstring path,
-        jdouble minLon, jdouble minLat, jdouble maxLon, jdouble maxLat,
-        jboolean includeAllFields, jstring labelField,
-        jboolean simplifyGeometry, jdouble simplifyTolerance) {
+namespace wwbridge {
 
+std::string readVectorFeatures(const std::string &pathStr,
+                               double minLon, double minLat, double maxLon, double maxLat,
+                               bool hasFilter, bool includeAll, const std::string &labelField,
+                               bool simplify, double simplifyTol) {
     GDALAllRegister();
-
-    const char *p = env->GetStringUTFChars(path, nullptr);
-    const std::string pathStr(p);
-    // 延迟属性读取：includeAllFields=false 时仅保留 labelField 白名单字段（可空），
-    // 其余字段留到点击时按 FID 回取。shp/gpkg 启用，kml/kmz/dwg/dxf 保持全字段。
-    const bool includeAll = (includeAllFields == JNI_TRUE);
-    const char *labelFieldC = (labelField != nullptr) ? env->GetStringUTFChars(labelField, nullptr) : nullptr;
-    // Phase 5：几何简化开关（默认 false），容差单位 WGS84 度
-    const bool simplify = (simplifyGeometry == JNI_TRUE);
-    const double simplifyTol = simplify ? simplifyTolerance : 0.0;
+    // 返回约定：空串 = 数据源打开失败（对应 JNI null）；{"error":...} = 业务错误文本
 
     // ── .qix 空间索引自动创建（仅 shp 格式）──
     // 没有 .qix 时 GDAL 的 SetSpatialFilterRect 仍需顺序扫描全部记录 header，
@@ -526,7 +512,8 @@ Java_com_zys_worldwindjni_NativeVector_readVectorFeatures(
             std::string qixPath = pathStr.substr(0, pathStr.size() - 4) + ".qix";
             if (access(qixPath.c_str(), F_OK) != 0) {
                 // .qix 不存在，尝试以更新模式打开并创建索引
-                GDALDataset *dsW = (GDALDataset *) GDALOpenEx(p, GDAL_OF_VECTOR | GDAL_OF_UPDATE,
+                GDALDataset *dsW = (GDALDataset *) GDALOpenEx(pathStr.c_str(),
+                                                             GDAL_OF_VECTOR | GDAL_OF_UPDATE,
                                                              nullptr, nullptr, nullptr);
                 if (dsW != nullptr) {
                     OGRLayer *lyr = dsW->GetLayer(0);
@@ -537,9 +524,8 @@ Java_com_zys_worldwindjni_NativeVector_readVectorFeatures(
                         OGRLayer *res = dsW->ExecuteSQL(sql.c_str(), nullptr, nullptr);
                         if (res) dsW->ReleaseResultSet(res);
                         if (access(qixPath.c_str(), F_OK) == 0) {
-                            __android_log_print(ANDROID_LOG_INFO, "NativeVector",
-                                                "已为 [%s] 创建 .qix 空间索引（后续加载将更快）",
-                                                lyr->GetName());
+                            LOGI("已为 [%s] 创建 .qix 空间索引（后续加载将更快）",
+                                 lyr->GetName());
                         }
                     }
                     GDALClose(dsW);
@@ -548,20 +534,18 @@ Java_com_zys_worldwindjni_NativeVector_readVectorFeatures(
         }
     }
 
-    GDALDataset *ds = (GDALDataset *) GDALOpenEx(p, GDAL_OF_VECTOR | GDAL_OF_READONLY,
+    GDALDataset *ds = (GDALDataset *) GDALOpenEx(pathStr.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY,
                                                  nullptr, nullptr, nullptr);
-    env->ReleaseStringUTFChars(path, p);
     if (ds == nullptr) {
-        __android_log_print(ANDROID_LOG_WARN, "NativeVector", "GDALOpenEx 打开矢量数据失败");
-        return nullptr;
+        LOGW("GDALOpenEx 打开矢量数据失败");
+        return "";
     }
 
     // CAD 无坐标系（无同名 .prj 且坐标不含投影带号）：米制坐标无法定位，不按 WGS84 原样输出，
     // 回传错误文本由界面提示并跳过加载（避免错位显示）。
     if (cadLacksSrs(pathStr.c_str(), ds->GetLayer(0))) {
         GDALClose(ds);
-        return env->NewStringUTF(
-                "{\"error\":\"该 CAD 数据无坐标系信息（无同名 .prj 且坐标不含投影带号），无法定位，已跳过加载\"}");
+        return "{\"error\":\"该 CAD 数据无坐标系信息（无同名 .prj 且坐标不含投影带号），无法定位，已跳过加载\"}";
     }
 
     std::string out = "{\"features\":[";
@@ -569,27 +553,25 @@ Java_com_zys_worldwindjni_NativeVector_readVectorFeatures(
     bool firstFeature = true;
     int count = 0;
     bool truncated = false;
-    // 空间过滤：仅读取屏幕中心点附近四至范围内的要素（含相邻要素缓冲），
-    // 从源头限制读取量，要素数与折点数同时受控；任一为 NaN 表示不过滤
-    bool hasFilter = !isnan(minLon) && !isnan(minLat) && !isnan(maxLon) && !isnan(maxLat);
+    // hasFilter：仅读屏幕 box 内要素（含缓冲），从源头限制读取量；
+    // 入口层以「任一为 NaN 即不过滤」口径归一后传入（Android/鸿蒙一致）。
 
     // 遍历全部图层（dwg 等格式的实体分布在多个子图层）
     int layerCount = ds->GetLayerCount();
     for (int li = 0; li < layerCount && !truncated; li++) {
         emitLayerFeatures(out, ds->GetLayer(li), pathStr.c_str(), firstFeature, count, truncated,
                           hasFilter, minLon, minLat, maxLon, maxLat,
-                          includeAll, labelFieldC, simplify, simplifyTol);
+                          includeAll, labelField.empty() ? nullptr : labelField.c_str(),
+                          simplify, simplifyTol);
     }
 
     if (truncated) {
-        __android_log_print(ANDROID_LOG_WARN, "NativeVector",
-                            "要素数超过上限 %d，已截断", MAX_VECTOR_FEATURES);
+        LOGW("要素数超过上限 %d，已截断", MAX_VECTOR_FEATURES);
     }
 
     out += "]}";
     GDALClose(ds);
-    if (labelFieldC != nullptr) env->ReleaseStringUTFChars(labelField, labelFieldC);
-    return env->NewStringUTF(out.c_str());
+    return out;
 }
 
 /**
@@ -597,25 +579,14 @@ Java_com_zys_worldwindjni_NativeVector_readVectorFeatures(
  * 返回 JSON：成功 {"features":[…]}（命中为空则数组为空），失败 {"error":"…"}。
  * 查询结果图层同样按源坐标系重投影到 WGS84，不做空间过滤（查询结果需完整呈现）。
  */
-extern "C"
-JNIEXPORT jstring JNICALL
-Java_com_zys_worldwindjni_NativeVector_queryVectorFeatures(
-        JNIEnv *env, jobject thiz, jstring path, jstring sql) {
-
+std::string queryVectorFeatures(const std::string &pathStr, const std::string &sqlText) {
     GDALAllRegister();
 
-    const char *p = env->GetStringUTFChars(path, nullptr);
-    const std::string pathStr(p);
-    const char *q = env->GetStringUTFChars(sql, nullptr);
-    std::string sqlText(q);
-    env->ReleaseStringUTFChars(sql, q);
-
-    GDALDataset *ds = (GDALDataset *) GDALOpenEx(p, GDAL_OF_VECTOR | GDAL_OF_READONLY,
+    GDALDataset *ds = (GDALDataset *) GDALOpenEx(pathStr.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY,
                                                  nullptr, nullptr, nullptr);
-    env->ReleaseStringUTFChars(path, p);
     if (ds == nullptr) {
-        __android_log_print(ANDROID_LOG_WARN, "NativeVector", "GDALOpenEx 打开矢量数据失败");
-        return nullptr;
+        LOGW("GDALOpenEx 打开矢量数据失败");
+        return "";
     }
 
     // 语法/字段错误经 CPL 错误处理器上报，静默处理后取错误文本回传界面提示
@@ -626,21 +597,19 @@ Java_com_zys_worldwindjni_NativeVector_queryVectorFeatures(
     CPLPopErrorHandler();
 
     if (result == nullptr) {
-        __android_log_print(ANDROID_LOG_WARN, "NativeVector", "SQL 执行失败: %s",
-                            errText.empty() ? "(无错误信息)" : errText.c_str());
+        LOGW("SQL 执行失败: %s", errText.empty() ? "(无错误信息)" : errText.c_str());
         GDALClose(ds);
         std::string out = "{\"error\":\"";
         jsonEscape(out, errText.empty() ? "SQL 语句执行失败" : errText.c_str());
         out += "\"}";
-        return env->NewStringUTF(out.c_str());
+        return out;
     }
 
     // CAD 无坐标系：查询结果同样无法定位，回传错误文本（界面按查询失败提示），不做错位高亮。
     if (cadLacksSrs(pathStr.c_str(), result)) {
         ds->ReleaseResultSet(result);
         GDALClose(ds);
-        return env->NewStringUTF(
-                "{\"error\":\"该 CAD 数据无坐标系信息（无同名 .prj 且坐标不含投影带号），无法定位查询结果\"}");
+        return "{\"error\":\"该 CAD 数据无坐标系信息（无同名 .prj 且坐标不含投影带号），无法定位查询结果\"}";
     }
 
     std::string out = "{\"features\":[";
@@ -650,15 +619,14 @@ Java_com_zys_worldwindjni_NativeVector_queryVectorFeatures(
     emitLayerFeatures(out, result, pathStr.c_str(), firstFeature, count, truncated, false, 0, 0, 0, 0);
 
     if (truncated) {
-        __android_log_print(ANDROID_LOG_WARN, "NativeVector",
-                            "查询命中要素数超过上限 %d，已截断", MAX_VECTOR_FEATURES);
+        LOGW("查询命中要素数超过上限 %d，已截断", MAX_VECTOR_FEATURES);
     }
 
     out += "]}";
     // 结果集由数据集拥有，须经 ReleaseResultSet 释放（不可 delete）
     ds->ReleaseResultSet(result);
     GDALClose(ds);
-    return env->NewStringUTF(out.c_str());
+    return out;
 }
 
 /**
@@ -666,18 +634,12 @@ Java_com_zys_worldwindjni_NativeVector_queryVectorFeatures(
  * 供上层判定小数据集是否直接全量渲染（避开按屏幕四至过滤+动态重载的开销）。
  * 打开失败返回 -1。
  */
-extern "C"
-JNIEXPORT jint JNICALL
-Java_com_zys_worldwindjni_NativeVector_countVectorFeatures(
-        JNIEnv *env, jobject thiz, jstring path) {
-
-    if (path == nullptr) return -1;
+long long countVectorFeatures(const std::string &path) {
+    if (path.empty()) return -1;
     GDALAllRegister();
 
-    const char *p = env->GetStringUTFChars(path, nullptr);
-    GDALDataset *ds = (GDALDataset *) GDALOpenEx(p, GDAL_OF_VECTOR | GDAL_OF_READONLY,
+    GDALDataset *ds = (GDALDataset *) GDALOpenEx(path.c_str(), GDAL_OF_VECTOR | GDAL_OF_READONLY,
                                                  nullptr, nullptr, nullptr);
-    env->ReleaseStringUTFChars(path, p);
     if (ds == nullptr) return -1;
 
     GIntBig total = 0;
@@ -690,25 +652,8 @@ Java_com_zys_worldwindjni_NativeVector_countVectorFeatures(
         if (c > 0) total += c;
     }
     GDALClose(ds);
-    if (total > 0x7FFFFFFFLL) total = 0x7FFFFFFFLL;  // jint 溢出兜底
-    return (jint) total;
-}
-
-/** jstring 数组 -> std::vector<std::string>（属性写回用） */
-static std::vector<std::string> JStringArrayToVector(JNIEnv *env, jobjectArray arr) {
-    std::vector<std::string> out;
-    if (arr == nullptr) return out;
-    jsize n = env->GetArrayLength(arr);
-    out.reserve((size_t) n);
-    for (jsize i = 0; i < n; i++) {
-        auto *s = (jstring) env->GetObjectArrayElement(arr, i);
-        if (s == nullptr) { out.emplace_back(""); continue; }
-        const char *c = env->GetStringUTFChars(s, nullptr);
-        out.emplace_back(c ? c : "");
-        if (c) env->ReleaseStringUTFChars(s, c);
-        env->DeleteLocalRef(s);
-    }
-    return out;
+    if (total > 0x7FFFFFFFLL) total = 0x7FFFFFFFLL;  // jint 溢出兑底（双平台统一口径）
+    return total;
 }
 
 /** 单调时钟毫秒差（耗时打点用） */
@@ -773,27 +718,13 @@ namespace {
 /**
  * 按 FID 更新矢量数据某要素的属性字段（就地写回源文件）。
  * 仅修改现有字段值，不支持新增字段/修改几何。dwg 等只读驱动 GDALOpenEx(GDAL_OF_UPDATE) 会失败，
- * 返回 JNI_FALSE 由上层提示。keys/values 长度必须一致。
+ * 返回 false 由上层提示。keys/values 长度必须一致。
  */
-extern "C"
-JNIEXPORT jboolean JNICALL
-Java_com_zys_worldwindjni_NativeVector_updateFeatureAttributes(
-        JNIEnv *env, jobject thiz, jstring path, jlong featureId,
-        jobjectArray keys, jobjectArray values) {
-
-    if (path == nullptr || featureId < 0 || keys == nullptr || values == nullptr) return JNI_FALSE;
-    jsize keyCount = env->GetArrayLength(keys);
-    jsize valueCount = env->GetArrayLength(values);
-    if (keyCount <= 0 || keyCount != valueCount) return JNI_FALSE;
-
-    const char *p = env->GetStringUTFChars(path, nullptr);
-    std::string pathStr(p);
-    env->ReleaseStringUTFChars(path, p);
-    if (pathStr.empty()) return JNI_FALSE;
-
-    std::vector<std::string> keyList = JStringArrayToVector(env, keys);
-    std::vector<std::string> valueList = JStringArrayToVector(env, values);
-    if (keyList.size() != valueList.size() || keyList.empty()) return JNI_FALSE;
+bool updateFeatureAttributes(const std::string &pathStr, long long featureId,
+                             const std::vector<std::string> &keyList,
+                             const std::vector<std::string> &valueList) {
+    if (pathStr.empty() || featureId < 0) return false;
+    if (keyList.empty() || keyList.size() != valueList.size()) return false;
 
     GDALAllRegister();
 
@@ -801,10 +732,8 @@ Java_com_zys_worldwindjni_NativeVector_updateFeatureAttributes(
                                                  GDAL_OF_VECTOR | GDAL_OF_UPDATE,
                                                  nullptr, nullptr, nullptr);
     if (ds == nullptr) {
-        __android_log_print(ANDROID_LOG_WARN, "NativeVector",
-                            "updateAttributes: 无法以更新模式打开数据源（格式可能只读）: %s",
-                            pathStr.c_str());
-        return JNI_FALSE;
+        LOGW("updateAttributes: 无法以更新模式打开数据源（格式可能只读）: %s", pathStr.c_str());
+        return false;
     }
 
     bool updated = false;
@@ -838,7 +767,7 @@ Java_com_zys_worldwindjni_NativeVector_updateFeatureAttributes(
         std::lock_guard<std::mutex> lk(gAttrCacheMtx);
         attrCacheErase(pathStr);
     }
-    return updated ? JNI_TRUE : JNI_FALSE;
+    return updated;
 }
 
 /**
@@ -850,25 +779,16 @@ Java_com_zys_worldwindjni_NativeVector_updateFeatureAttributes(
  * shp 经 .shx 随机读 seek ~1-3ms，gpkg 经 SQLite 主键 B-tree seek 同量级；
  * KML/DXF 首次仍需整文件解析（弹层先行异步回填兜住感知），第二次起命中句柄缓存为毫秒级。
  */
-extern "C"
-JNIEXPORT jstring JNICALL
-Java_com_zys_worldwindjni_NativeVector_getFeatureAttributes(
-        JNIEnv *env, jobject thiz, jstring path, jlong featureId) {
-
-    if (path == nullptr || featureId < 0) return nullptr;
+std::string getFeatureAttributes(const std::string &pathStr, long long featureId) {
+    if (pathStr.empty() || featureId < 0) return "";
     GDALAllRegister();
-
-    const char *p = env->GetStringUTFChars(path, nullptr);
-    std::string pathStr(p ? p : "");
-    env->ReleaseStringUTFChars(path, p);
-    if (pathStr.empty()) return nullptr;
 
     timespec t0{};
     clock_gettime(CLOCK_MONOTONIC, &t0);
 
     std::lock_guard<std::mutex> lk(gAttrCacheMtx);
     GDALDataset *ds = attrCacheOpen(pathStr);
-    if (ds == nullptr) return nullptr;
+    if (ds == nullptr) return "";
 
     std::string out;
     bool found = false;
@@ -886,9 +806,133 @@ Java_com_zys_worldwindjni_NativeVector_getFeatureAttributes(
     }
 
     // 句柄归缓存所有：不关闭，供后续点击直接复用（文件变化/写回时失效）
-    if (!found) return nullptr;
-    __android_log_print(ANDROID_LOG_DEBUG, "NativeVector",
-                        "getFeatureAttributes fid=%lld cost=%ldms path=%s",
-                        (long long) featureId, elapsedMs(t0), pathStr.c_str());
-    return env->NewStringUTF(out.c_str());
+    if (!found) return "";
+    LOGD("getFeatureAttributes fid=%lld cost=%ldms path=%s",
+         (long long) featureId, elapsedMs(t0), pathStr.c_str());
+    return out;
 }
+
+} // namespace wwbridge
+
+// ── Android JNI 导出薄封装（com.zys.worldwindjni.NativeVector 门面）──
+#if !defined(__OHOS__)
+#include <jni.h>
+
+/** jstring 数组 -> std::vector<std::string>（属性写回用） */
+static std::vector<std::string> JStringArrayToVector(JNIEnv *env, jobjectArray arr) {
+    std::vector<std::string> out;
+    if (arr == nullptr) return out;
+    jsize n = env->GetArrayLength(arr);
+    out.reserve((size_t) n);
+    for (jsize i = 0; i < n; i++) {
+        auto *s = (jstring) env->GetObjectArrayElement(arr, i);
+        if (s == nullptr) { out.emplace_back(""); continue; }
+        const char *c = env->GetStringUTFChars(s, nullptr);
+        out.emplace_back(c ? c : "");
+        if (c) env->ReleaseStringUTFChars(s, c);
+        env->DeleteLocalRef(s);
+    }
+    return out;
+}
+
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_com_zys_worldwindjni_NativeVector_readVectorFeatures(
+        JNIEnv *env, jobject /*thiz*/, jstring path,
+        jdouble minLon, jdouble minLat, jdouble maxLon, jdouble maxLat,
+        jboolean includeAllFields, jstring labelField,
+        jboolean simplifyGeometry, jdouble simplifyTolerance) {
+
+    if (path == nullptr) return nullptr;
+    const char *p = env->GetStringUTFChars(path, nullptr);
+    if (p == nullptr) return nullptr;
+    const std::string pathStr(p);
+    env->ReleaseStringUTFChars(path, p);
+
+    // 延迟属性读取：includeAllFields=false 时仅保留 labelField 白名单字段（可空），
+    // 其余字段留到点击时按 FID 回取。shp/gpkg 启用，kml/kmz/dwg/dxf 保持全字段。
+    const bool includeAll = (includeAllFields == JNI_TRUE);
+    std::string labelFieldStr;
+    if (labelField != nullptr) {
+        const char *lf = env->GetStringUTFChars(labelField, nullptr);
+        if (lf != nullptr) { labelFieldStr = lf; env->ReleaseStringUTFChars(labelField, lf); }
+    }
+    // Phase 5：几何简化开关（默认 false），容差单位 WGS84 度
+    const bool simplify = (simplifyGeometry == JNI_TRUE);
+    const double simplifyTol = simplify ? simplifyTolerance : 0.0;
+    // 任一为 NaN 表示不过滤（Kotlin 侧传入口径，归一后交核心）
+    const bool hasFilter = !isnan(minLon) && !isnan(minLat) && !isnan(maxLon) && !isnan(maxLat);
+
+    std::string json = wwbridge::readVectorFeatures(pathStr, minLon, minLat, maxLon, maxLat,
+                                                    hasFilter, includeAll, labelFieldStr,
+                                                    simplify, simplifyTol);
+    if (json.empty()) return nullptr;
+    return env->NewStringUTF(json.c_str());
+}
+
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_com_zys_worldwindjni_NativeVector_queryVectorFeatures(
+        JNIEnv *env, jobject /*thiz*/, jstring path, jstring sql) {
+
+    if (path == nullptr || sql == nullptr) return nullptr;
+    const char *p = env->GetStringUTFChars(path, nullptr);
+    if (p == nullptr) return nullptr;
+    const std::string pathStr(p);
+    env->ReleaseStringUTFChars(path, p);
+    const char *q = env->GetStringUTFChars(sql, nullptr);
+    if (q == nullptr) return nullptr;
+    const std::string sqlText(q);
+    env->ReleaseStringUTFChars(sql, q);
+
+    std::string json = wwbridge::queryVectorFeatures(pathStr, sqlText);
+    if (json.empty()) return nullptr;
+    return env->NewStringUTF(json.c_str());
+}
+
+extern "C"
+JNIEXPORT jint JNICALL
+Java_com_zys_worldwindjni_NativeVector_countVectorFeatures(
+        JNIEnv *env, jobject /*thiz*/, jstring path) {
+
+    if (path == nullptr) return -1;
+    const char *p = env->GetStringUTFChars(path, nullptr);
+    if (p == nullptr) return -1;
+    const std::string pathStr(p);
+    env->ReleaseStringUTFChars(path, p);
+    return (jint) wwbridge::countVectorFeatures(pathStr);
+}
+
+extern "C"
+JNIEXPORT jboolean JNICALL
+Java_com_zys_worldwindjni_NativeVector_updateFeatureAttributes(
+        JNIEnv *env, jobject /*thiz*/, jstring path, jlong featureId,
+        jobjectArray keys, jobjectArray values) {
+
+    if (path == nullptr || featureId < 0 || keys == nullptr || values == nullptr) return JNI_FALSE;
+    const char *p = env->GetStringUTFChars(path, nullptr);
+    if (p == nullptr) return JNI_FALSE;
+    const std::string pathStr(p);
+    env->ReleaseStringUTFChars(path, p);
+    std::vector<std::string> keyList = JStringArrayToVector(env, keys);
+    std::vector<std::string> valueList = JStringArrayToVector(env, values);
+    return wwbridge::updateFeatureAttributes(pathStr, (long long) featureId, keyList, valueList)
+               ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_com_zys_worldwindjni_NativeVector_getFeatureAttributes(
+        JNIEnv *env, jobject /*thiz*/, jstring path, jlong featureId) {
+
+    if (path == nullptr || featureId < 0) return nullptr;
+    const char *p = env->GetStringUTFChars(path, nullptr);
+    if (p == nullptr) return nullptr;
+    const std::string pathStr(p);
+    env->ReleaseStringUTFChars(path, p);
+    std::string json = wwbridge::getFeatureAttributes(pathStr, (long long) featureId);
+    if (json.empty()) return nullptr;
+    return env->NewStringUTF(json.c_str());
+}
+
+#endif // !__OHOS__

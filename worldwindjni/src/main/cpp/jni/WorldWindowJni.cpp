@@ -244,7 +244,7 @@ Java_com_zys_worldwindjni_NativeLib_nativeRotateHeading(JNIEnv * /*env*/, jobjec
     toWorldWindow(handle)->rotateHeading(deltaDeg);
 }
 
-// 手势俯仰：相机 tilt 累加增量（度，正=向地平线方向倾视，native 钳 [0,75]），仅 3D 通路消费
+// 手势俯仰：相机 tilt 累加增量（度，正=向地平线方向倾视，native 钳 [0,80]），仅 3D 通路消费
 //（2D 不消费 tilt，Kotlin 手势侧已门控不调用）
 JNIEXPORT void JNICALL
 Java_com_zys_worldwindjni_NativeLib_nativeRotateTilt(JNIEnv * /*env*/, jobject /*thiz*/, jlong handle,

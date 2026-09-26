@@ -20,6 +20,9 @@ constexpr auto kFailCooldown = std::chrono::seconds(30);
 /// 会堆积上万块下载字节（每块 ~10-20KB）撑爆 native 堆（实测 Scudo exhausted 256M 崩溃）。超水位时丢弃
 /// 本次交付——联网字节已 writeTile 落盘，后续重请求走读盘秒得，仅牺牲一批陈旧字节的即时性，杜绝 OOM。
 constexpr size_t kMaxReadyTiles = 1024;
+/// 请求队列上限：3D 连续手势下视角每帧一换（一帧可见集可达数百块），过期请求会在队列里
+/// 大量堆积；超限时从队首丢弃最旧的（属于已滑出的旧视角，下帧起不再需要），为当前视角让路。
+constexpr size_t kMaxQueue = 1200;
 
 /// 图像格式魔数校验（PNG/JPEG/WEBP/GIF/BMP）：拦截图源「HTTP 200 + 异常 XML/HTML 错误页」
 /// 被当作有效瓦片落盘污染缓存（实测天地图限流时回 200+约 100B 的 ExceptionReport）。
@@ -114,6 +117,12 @@ void TileLoader::request(int z, int x, int y) {
         }
         pending_.insert(k);
         queue_.push_back(Request{z, x, y});
+        // 超限丢最旧：被丢者同步移出 pending_，若仍可见下一帧会重新入队（去重不受损）
+        while (queue_.size() > kMaxQueue) {
+            const Request &oldest = queue_.front();
+            pending_.erase(key(oldest.z, oldest.x, oldest.y));
+            queue_.pop_front();
+        }
     }
     cv_.notify_one();
 }
@@ -148,8 +157,11 @@ void TileLoader::workerLoop() {
             cv_.wait(lk, [this] { return stop_ || !queue_.empty(); });
             if (stop_) return;
             if (queue_.empty()) continue;
-            req = queue_.front();
-            queue_.pop_front();
+            // LIFO 取最新请求：连续手势下视角每帧一换，FIFO 会让工作线程一直下载已滑出
+            // 屏幕的旧视角瓦片，当前视角排在队尾迟迟轮不上（3D 移动时"慢、停下才补齐"）。
+            // 队首的陈旧项由 kMaxQueue 超限丢弃兜底，不会无限积压。
+            req = queue_.back();
+            queue_.pop_back();
         }
 
         // 1) 先读磁盘缓存（异步，避免 GL 线程阻塞）；命中则直接交付，不联网。

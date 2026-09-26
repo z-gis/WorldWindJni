@@ -58,6 +58,8 @@ void Navigator::setDetailControl(double detailControl) {
 void Navigator::setViewMode(ViewMode mode) {
     std::lock_guard<std::mutex> lk(mtx_);
     mode_ = mode;
+    // 切到 3D 立即按整球上限钳制高度（2D 可缩到远高于整球可见的高度），避免切换后首帧地球缩成一点
+    clampAltitude();
 }
 
 Navigator::ViewMode Navigator::viewMode() const {
@@ -101,7 +103,21 @@ Navigator::Camera3D Navigator::camera3DUnlocked() const {
     if (tilt_ != 0.0) {
         Vec3 nrm;
         g.geographicNormal(centerLon_, centerLat_, nrm);
-        const double t = tilt_ * kPi / 180.0;
+        double t = tilt_ * kPi / 180.0;
+        // 眼点沉地保护：本模型把斜距拉长到 alt/cos t（保眼高），而眼沿中心法向的反方向后退——
+        // alt/cos t 超过当地椭球半径时眼落到地面以下：horizonVisible 全假 → Tessellator 剔光全部
+        // 瓦片 → 只剩纯黑背景（实测 3D 带倾角缩小到一定高度后整屏黑屏，tilt=0 永不触发：后退
+        // 方向即法向本身）。故每帧按当前高度钳制「有效倾角」使斜距 ≤ 当地半径：只削渲染用
+        // 角度、不动存储值，拉回后满倾角无缝恢复（同 rotateTilt 到底不响应、反向即回的语义）。
+        const double latR = centerLat_ * kPi / 180.0;
+        const double sinL = std::sin(latR), cosL = std::cos(latR);
+        const double rSurf = std::sqrt(std::pow(Wgs84Globe::A * cosL, 2.0) +
+                                       std::pow(Wgs84Globe::B * sinL, 2.0)); // 中心法向与椭球交点距地心距
+        const double slant = altitude_ / std::cos(t);
+        if (slant > rSurf) {
+            const double ratio = altitude_ / rSurf; // 可能 >1：此时任意倾角均安全，不钳
+            if (ratio < 1.0) t = std::acos(ratio);  // alt/cos t = rSurf 的临界倾角（acos 单调，削小 t）
+        }
         const Vec3 uDir = c.up; // 水平屏幕上方（已归一、⟂ nrm）
         const Vec3 forward = uDir * std::sin(t) - nrm * std::cos(t); // 单位视线（由 -nrm 向地平线倾 t，指向 T）
         c.eye = c.center - forward * (altitude_ / std::cos(t));      // 目标不动，眼后退且保持眼高
@@ -366,7 +382,18 @@ void Navigator::clampAltitude() {
     // 显示级别恒钳在 ≈20（与原主界面放大量对齐，MAX_LEVEL=24 仅作 zoom 硬上限兜底）。
     const double altMin = std::max(k / std::pow(2.0, static_cast<double>(MAX_LEVEL)),
                                    kMinCameraAltitudeMeters);
-    const double altMax = k; // 2^MIN_LEVEL = 1
+    // 高度上限（缩小极限）：
+    //  · 3D：对齐 wwd BasicWorldWindowController.applyLimits 的 maxRange = distanceToViewGlobeExtents × 2，
+    //    其中 distanceToViewGlobeExtents = R/sin(fov/2) − R（整球恰好竖直填满视口的高度）。×2 后整球约占
+    //    视口高 60%，对应 app 显示级别恰为 0——缩到「看到整个地球」即止，不再作无意义的缩小。
+    //  · 2D：沿用 zoom=MIN_LEVEL 反推（2^MIN_LEVEL=1，整幅墨卡托世界可见即止），避免 2D 缩小回归。
+    double altMax = k;
+    if (mode_ == ViewMode::MODE_3D) {
+        const double sinHalfFov = std::sin(fieldOfViewDeg_ * kPi / 180.0 * 0.5);
+        if (sinHalfFov > 1e-6) {
+            altMax = (EQUATORIAL_RADIUS / sinHalfFov - EQUATORIAL_RADIUS) * 2.0;
+        }
+    }
     if (altitude_ < altMin) altitude_ = altMin;
     if (altitude_ > altMax) altitude_ = altMax;
 }

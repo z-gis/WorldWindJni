@@ -24,7 +24,9 @@ FontAtlas::~FontAtlas() {
 
 std::string FontAtlas::detectSystemFontPath() {
     // 覆盖主流 ROM 的系统 CJK 字体命名：Noto Sans CJK（.ttc 集合，API 26+ 常见）、
-    // 思源黑体、旧机型 DroidSansFallback（TrueType）。逐个探测首个可读文件。
+    // 思源黑体、旧机型 DroidSansFallback（TrueType）、鸿蒙 HarmonyOS Sans（含中文字形）。
+    // 逐个探测首个可读文件；不存在的候选探测失败无副作用，故两端共用同一候选表。
+    // 鸿蒙真机字体实名以 hdc shell ls /system/fonts 为准，ArkTS 侧亦可经 setFontPath 显式指定。
     static const char *const kCandidates[] = {
         "/system/fonts/NotoSansCJK-Regular.ttc",
         "/system/fonts/NotoSansSC-Regular.otf",
@@ -34,6 +36,8 @@ std::string FontAtlas::detectSystemFontPath() {
         "/system/fonts/NotoSansCJKjp-Regular.otf",
         "/system/fonts/DroidSansFallbackFull.ttf",
         "/system/fonts/DroidSansFallback.ttf",
+        "/system/fonts/HarmonyOS_Sans_SC.ttf",
+        "/system/fonts/HarmonyOS_Sans_Regular.ttf",
     };
     for (const char *p : kCandidates) {
         FILE *f = std::fopen(p, "rb");

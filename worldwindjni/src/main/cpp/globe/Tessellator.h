@@ -30,15 +30,16 @@ struct GlobeTile {
 /**
  * Tessellator：3D 球体模式下的可见瓦片选取器。**照搬 wwd BasicTessellator.addTileOrDescendants 的四步**：
  *
- *  1) `Tile.intersectsSector` / `isFullyFogged` 等价物 —— **地平线剔除**：
- *     以「瓦片地表点到眼点的最近距离」判 (nearest · ê) < R²/|E|（等价 nearest 角距 > acos(R/|E|)）
- *     即整块位于地平线以下 → 剪枝。与 wwd `AbstractTile.nearestPoint` 同一几何基准。
+ *  1) 地平线剔除 —— **保守剪枝：「地理最近点 + 3×3 网格采样点 + 触极行两极补点」全部在地平线下才剔**
+ *     （任一可见即保留）。最近点保住根/粗级瓦片不被稀疏网格误剔（否则 alt 降低时整棵根树被剔→黑屏）；
+ *     网格+极冠补点保住远景跨地平线/极冠瓦片（否则远端极冠黑洞）。wwd 本无此闸，隐藏部分交由深度测试裁决。
  *  2) `Tile.intersectsFrustum` 等价物 —— **视锥测试用世界轴 AABB**（非包围球），AABB 由
  *     瓦片 **3×3 地理网格** 9 个 Cartesian 采样点求 min/max；若瓦片跨经度 > 180°（仅根/一级），
  *     按 wwd `BoundingBox.setToSector` 补 centroid (lat, lon±90°) 两点。半球瓦片 AABB 略保守但
  *     绝不误剔，交由下一级细分收敛。
  *  3) `Tile.mustSubdivide` 等价物 —— **屏幕空间误差用最近点距**：
- *     texelSize = 2πR·cos(centroid lat)/2^z；pixelSize = 2·dNearest·tan(fov/2)/viewportH；
+ *     texelSize = 2πR·cos(centroid lat)/(256·2^z)（逐纹素米数 = 瓦片宽 ÷ 256，对齐 wwd texelSizeFactor·R）；
+ *     pixelSize = 2·dNearest·tan(fov/2)/viewportH；
  *     texelSize > pixelSize·detailFactor 才继续细分（同 wwd `Tile.mustSubdivide` 3D 分支，去掉 fog 项）。
  *     与 z>=targetLevel / z>=maxLevel / z>=30 任一成立则出叶。
  *  4) **DFS 子瓦片按 nearestDistance 升序递归**（对齐 wwd `currentTiles.sortBy{sortOrder}` 的"近侧先装"效果，

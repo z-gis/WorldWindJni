@@ -88,7 +88,9 @@ public:
 
     /// 手势俯仰：相机 tilt 累加 [deltaDeg] 度（正=向地平线方向倾视，0=正下 nadir），
     /// 累加后钳制到 [0, MAX_TILT_DEG]。仅 3D 透视通路消费（2D 正交不消费 tilt），
-    /// 语义为「绕目标保眼高」俯仰（见 camera3D 注释），屏心地面点不漂移
+    /// 语义为「绕目标保眼高」俯仰（见 camera3D 注释），屏心地面点不漂移。
+    /// 注：保眼高模型把斜距拉长到 alt/cos t，高空大倾角时眼会落到地面以下（黑屏根因），
+    /// 故 camera3D 每帧按当前高度钳制**有效倾角**使斜距 ≤ 当地半径；存储值不动，拉回即恢复。
     void rotateTilt(double deltaDeg);
 
     /// 设置屏幕密度（对齐 wwd WorldWindow 的 engine.setupViewport(w,h,displayMetrics.density)），
@@ -153,8 +155,9 @@ public:
     static constexpr int MAX_LEVEL = 24;
     /// 图源默认最大瓦片级别（多数在线底图源为 18，与 MapSource.DEFAULT_MAX_LEVEL 一致）
     static constexpr int DEFAULT_MAX_LEVEL = 18;
-    /// 3D 俯仰角上限（度）：超过后近地平线视角退化、地面目标失去意义（对齐主流地图 App 约 75° 上限）
-    static constexpr double MAX_TILT_DEG = 75.0;
+    /// 3D 俯仰角上限（度）：对齐 wwd BasicWorldWindowController.applyLimits 的 maxTilt=80；
+    /// 超过后近地平线视角退化（手势侧按 180·Δcy/视口高 逐帧累加，到底后同向拖动无效果、反向即回）
+    static constexpr double MAX_TILT_DEG = 80.0;
 
 private:
     // 以下 *Unlocked 版本不加锁，供已持锁的公开方法内部复用（避免非递归 mutex 重入死锁）

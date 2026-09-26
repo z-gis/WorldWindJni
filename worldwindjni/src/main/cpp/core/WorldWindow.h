@@ -55,6 +55,10 @@ public:
     /// 读回当前视图模式（0/1），供宿主 UI 态同步。
     int viewMode() const;
 
+    /// 当前视口高（像素，与 panByPixels/zoomBy 位移入参同一单位口径）：供手势层按 wwd
+    /// 的 180·Δcy/视口高 换算俯仰灵敏度（手势位移与视口高同单位，免密度换算错配）。
+    int viewportHeight() const;
+
     /// 手势平移（屏幕像素位移）。Phase D 由 JNI 暴露给 Kotlin 手势识别调用
     void panByPixels(double dxPx, double dyPx);
 

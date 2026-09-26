@@ -80,10 +80,12 @@ class NativeMapView @JvmOverloads constructor(
             return h != 0L && NativeLib.nativeGetViewMode(h) == 1
         }
 
+        override fun viewHeightPx(): Int = this@NativeMapView.height
+
         override fun tiltBy(deltaDeg: Double) {
             val h = nativeHandle
             // 仅 3D 消费俯仰（与 rotateBy 同口径门控）；deltaDeg 已是相机 tilt 增量（方向/灵敏度在
-            // MapGestures 折算），native 钳 [0,75]，透传累加即可
+            // MapGestures 折算），native 钳 [0,80]，透传累加即可
             if (h != 0L && NativeLib.nativeGetViewMode(h) == 1) NativeLib.nativeRotateTilt(h, deltaDeg)
         }
 

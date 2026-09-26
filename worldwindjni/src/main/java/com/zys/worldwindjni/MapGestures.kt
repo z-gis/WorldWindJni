@@ -28,8 +28,11 @@ internal interface GestureSink {
     /** 当前是否 3D 透视模式：双指纵向俯仰（tilt）仅在 3D 生效，且 3D 下双指拖动让位 tilt 不再平移 */
     fun is3DMode(): Boolean
 
+    /** 视图高（像素）：供 tilt 按 wwd 口径 180°·Δcy/视图高 换算俯仰量（与 native panBy 位移同单位） */
+    fun viewHeightPx(): Int
+
     /** 双指纵向拖拽：相机 tilt 累加增量（度，正=向地平线方向倾视）；「上推倾视/下拉回正」的
-     * 方向折算与灵敏度换算已在本识别器完成，实现方仅做 3D 门控后透传 native（native 钳 [0,75]） */
+     * 方向折算与灵敏度换算（180°/视图高，对齐 wwd）已在本识别器完成，实现方仅做 3D 门控后透传 native（native 钳 [0,80]） */
     fun tiltBy(deltaDeg: Double)
 
     /** 请求重绘一帧（对齐 GLSurfaceView.requestRender） */
@@ -80,8 +83,12 @@ internal class MapGestures(
     /** 双指俯仰基准：两指质心 Y（像素）；非双指态为 NaN，建基准/复位同 [lastPinchAngleRad] */
     private var lastPinchCentroidY = Float.NaN
 
-    /** tilt 灵敏度（度/像素）：≈300px 行程扫完 0..75° 全程（主流地图 App 同量级） */
-    private val tiltDegPerPixel = 0.25
+    /** 俯仰灵敏度采用 wwd 口径：tiltDelta = 180° · ΔcyPx / 视图高（见 onTouchEvent），不再用自定的
+     * 固定「度/像素」常量（旧 0.15/0.25 为拍脑袋值，与 wwd 的 180°/屏高不一致） */
+
+    /** 旋转/俯仰解耦阈值（度/事件）：双指连线角逐帧增量绝对值超此值判为「旋转手势」，本帧不据质心 Y 调仰角
+     *（对齐 wwd：旋转仅改 heading，tilt 为独立手势；我们保留双指俯仰故需此阈值近似解耦） */
+    private val rotateSuppressTiltDeg = 0.8
 
     /** 两指连线夹角（弧度）。屏幕 y 向下 → 该角随手指「视觉顺时针」旋转而增大 */
     private fun pinchAngleRad(event: MotionEvent): Double = Math.atan2(
@@ -198,21 +205,8 @@ internal class MapGestures(
             }
         }
         if (event.actionMasked == MotionEvent.ACTION_MOVE && event.pointerCount == 2) {
-            // 双指俯仰（仅 3D）：质心 Y 逐帧增量换算倾角——上推（dyPx<0）向地平线倾视、下拉回正，
-            // 同主流地图 App 惯例；与双指旋转/捏合共用同一事件序列，互不排斥
-            if (sink.is3DMode()) {
-                val cy = pinchCentroidY(event)
-                if (lastPinchCentroidY.isNaN()) {
-                    lastPinchCentroidY = cy // 未捕到 POINTER_DOWN 基准（如多指转双指），本帧仅建基准不倾视
-                } else {
-                    val tiltDeltaDeg = -(cy - lastPinchCentroidY) * tiltDegPerPixel
-                    lastPinchCentroidY = cy
-                    if (tiltDeltaDeg != 0.0 && sink.isReady()) {
-                        sink.tiltBy(tiltDeltaDeg.toDouble())
-                        sink.requestRender()
-                    }
-                }
-            }
+            // 双指旋转：两指连线 atan2 角逐帧增量（内容跟随手指）。先算旋转量，据其大小决定本帧是否让位仰角。
+            var rotDeltaDeg = 0.0
             val angle = pinchAngleRad(event)
             if (lastPinchAngleRad.isNaN()) {
                 lastPinchAngleRad = angle // 未捕到 POINTER_DOWN 基准（如多指转双指），本帧仅建立基准不旋转
@@ -222,11 +216,29 @@ internal class MapGestures(
                 // 跨 ±180° 环绕的回跳：增量归一到 (-180, 180]，防临界帧 360° 大跳
                 if (deltaDeg > 180.0) deltaDeg -= 360.0
                 if (deltaDeg <= -180.0) deltaDeg += 360.0
+                rotDeltaDeg = deltaDeg
                 if (deltaDeg != 0.0 && sink.isReady()) {
                     // 两指连线 atan2 角增大（deltaDeg>0）对应手指视觉顺时针旋转；经真机验证，
                     // heading 增大时内容顺时针转（相机相对地转反向），故直接透传 deltaDeg 即内容跟随手指
                     sink.rotateBy(deltaDeg)
                     sink.requestRender()
+                }
+            }
+            // 双指俯仰（仅 3D）：质心 Y 逐帧增量换算倾角——上推（dyPx<0）向地平线倾视、下拉回正；
+            // 本帧若为旋转手势（|Δ角|≥阈值）则抑制仰角（对齐 wwd 旋转不改 tilt），仅更新基准免跳变误触发大仰角。
+            if (sink.is3DMode()) {
+                val cy = pinchCentroidY(event)
+                if (lastPinchCentroidY.isNaN()) {
+                    lastPinchCentroidY = cy // 未捕到 POINTER_DOWN 基准（如多指转双指），本帧仅建基准不倾视
+                } else {
+                    // 双指俯仰：质心 Y 逐帧增量按 wwd 口径 180°·Δcy/视图高 换算（与 native panBy 同单位）
+                    val vhPx = sink.viewHeightPx()
+                    val tiltDeltaDeg = if (vhPx > 0) -(cy - lastPinchCentroidY) * 180.0 / vhPx else 0.0
+                    lastPinchCentroidY = cy
+                    if (Math.abs(rotDeltaDeg) < rotateSuppressTiltDeg && tiltDeltaDeg != 0.0 && sink.isReady()) {
+                        sink.tiltBy(tiltDeltaDeg.toDouble())
+                        sink.requestRender()
+                    }
                 }
             }
         }

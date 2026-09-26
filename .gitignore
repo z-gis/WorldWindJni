@@ -39,14 +39,29 @@ worldwindjni/src/main/assets/proj/**
 !worldwindjni/src/main/assets/proj/.gitkeep
 
 # 构建脚本生成的工作区（下载的 NDK/cmake、源码包、编译中间产物、安装前缀）不入仓；
-# build-scripts 只应收录 *.sh 脚本
+# build-scripts 只应收录 *.sh 脚本与 README；out/ 为 --target ohos 的 .a 落位目录
 build-scripts/ndk/
 build-scripts/cmake/
 build-scripts/third-party/
 build-scripts/export/
+build-scripts/out/
 build-scripts/**/*.tar.gz
 build-scripts/**/*.zip
 build-scripts/_*
 wget-log*
+
+# PROJ 运行期数据（鸿蒙 HAR rawfile）同样由 build-all --target ohos 生成，不入仓；保留占位
+worldwind-ohos/library/src/main/resources/rawfile/proj/**
+!worldwind-ohos/library/src/main/resources/rawfile/proj/.gitkeep
+
+# DevEco / hvigor 构建产物与本地配置（worldwind-ohos 鸿蒙工程）
+worldwind-ohos/**/oh_modules/
+worldwind-ohos/**/build/
+worldwind-ohos/.hvigor/
+worldwind-ohos/.clangd
+worldwind-ohos/.clang-format
+worldwind-ohos/.clang-tidy
+worldwind-ohos/.cxx/
+worldwind-ohos/local.properties
 
 .kotlin

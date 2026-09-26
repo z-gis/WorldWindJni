@@ -569,6 +569,14 @@ constexpr double kMarkerLeaderLenDp = 100.0;
 constexpr float kArrowR = 0x57 / 255.0f;
 constexpr float kArrowG = 0xAC / 255.0f;
 constexpr float kArrowB = 0xFD / 255.0f;
+// 移动方向箭头几何（dp，乘 density 得 px）——直接移植 0.2.8 主界面 LocationModel.createHeadingArrowIcon：
+// 128px 画布 + imageScale 0.5×density（位图坐标 ×0.5 即 dp 尺寸），Path 为凹口导航箭头：
+// (center, center-0.16S) 箭尖 → (center±0.14S, center+0.16S) 底角 → (center, center+0.08S) 凹口。
+// 箭头以定位点为中心固定屏幕尺寸绘制，不随罗盘图标放大（旧版按图标半宽 1.35/2.2 倍拉伸过大）。
+constexpr double kArrowTipDp = 10.24;   // 箭尖到定位点距离（前）= 128×0.16×0.5
+constexpr double kArrowBackDp = 10.24;  // 底角到定位点距离（后）
+constexpr double kArrowHalfDp = 8.96;   // 底角横向半宽 = 128×0.14×0.5
+constexpr double kArrowNotchDp = 5.12;  // 凹口到定位点距离（后）= 128×0.08×0.5
 
 /**
  * 把多条 GL_TRIANGLE_STRIP 段（ranges 为 (first,count) 顶点区间）的 [fromRange,toRange) 切片合批为
@@ -1337,37 +1345,6 @@ bool Renderer::renderGlobeLayer3D(size_t layerIndex, const Navigator::Camera3D &
         }
     }
 
-    // 诊断日志（P1 3D 调查期）：仅在相机/可见集「内容变化」时输出一行（静止高倍时不再逐帧刷屏）。
-    // head 为 z 降序后首叶（距眼最近）；问题定位后整段移除。
-    {
-        static double dEyeX = 0, dEyeY = 0, dEyeZ = 0;
-        static int dTarget = -1, dLeaves = -1, dHead = -1;
-        const bool changed =
-            std::abs(cam.eye.x - dEyeX) > 1.0 || std::abs(cam.eye.y - dEyeY) > 1.0 ||
-            std::abs(cam.eye.z - dEyeZ) > 1.0 ||
-            targetLevel != dTarget || static_cast<int>(globeTilesScratch_.size()) != dLeaves ||
-            (!globeTilesScratch_.empty() &&
-             (static_cast<int>(globeTilesScratch_.front().x) != dHead));
-        if (changed) {
-            dEyeX = cam.eye.x; dEyeY = cam.eye.y; dEyeZ = cam.eye.z;
-            dTarget = targetLevel;
-            dLeaves = static_cast<int>(globeTilesScratch_.size());
-            dHead = globeTilesScratch_.empty() ? -1 : static_cast<int>(globeTilesScratch_.front().x);
-            double eLon = 0.0, eLat = 0.0, eAlt = 0.0;
-            Wgs84Globe::instance().cartesianToGeographic(cam.eye, eLon, eLat, eAlt);
-            int zMin = 32, zMax = -1;
-            for (const GlobeTile &t : globeTilesScratch_) {
-                if (t.z < zMin) zMin = t.z;
-                if (t.z > zMax) zMax = t.z;
-            }
-            const GlobeTile &hd = globeTilesScratch_.empty()
-                                      ? GlobeTile{} : globeTilesScratch_.front();
-            LOGI("3D 瓦片诊断 eye=(%.4f,%.4f) alt=%.1f target=%d leaves=%zu z=%d..%d head=(%d,%d,%d)",
-                 eLon, eLat, eAlt, targetLevel, globeTilesScratch_.size(), zMin, zMax,
-                 hd.z, hd.x, hd.y);
-        }
-    }
-
     // Pass A 占位：无图且无祖先的瓦片画棋盘深色贴球面（首帧/断网时呈现球体轮廓）；
     // overlay（注记）层跳过保持透明（同 2D）。批量累积一次上传一次绘制。
     if (!layer.overlay) {
@@ -1546,7 +1523,6 @@ void Renderer::drawLocationMarker(double cwx, double cwy, double hw, const Matri
     // 先画罗盘图标（或蓝点白边圆），再画移动方向箭头（箭头在最上层，不被图标遮盖）。
     // 方位角顺时针自北；世界坐标中北=-y、东=+x（wy 向南增长），故方向向量 dir=(sinθ, -cosθ)。
     float iconHalfW = 0.0f, iconHalfH = 0.0f;
-    bool hasIcon = false;
 
     // 有罗盘图标时画纹理四边形替代蓝点（对齐原主界面 LocationModel ic_compass 方式）；
     // 无图标时回退经典蓝点白边圆
@@ -1561,7 +1537,6 @@ void Renderer::drawLocationMarker(double cwx, double cwy, double hw, const Matri
         iconHalfW = static_cast<float>(markerIconW_ * kMarkerIconScale * density * worldPerPx * 0.5);
         iconHalfH = static_cast<float>(markerIconH_ * kMarkerIconScale * density * worldPerPx * 0.5);
         if (iconHalfW <= 0.0f || iconHalfH <= 0.0f) goto drawBlueDot;
-        hasIcon = true;
         // 中心锚点四边形（与 drawVectorIcons 同口径：顶点存中心 + 角点属性，uHalf 每帧传尺寸；
         // 顶点色白=纯图标，v=0 图像顶行 → 正立）。定位标记仅单四边形，仍走动态 vboIcon_。
         std::vector<float> quad;
@@ -1625,22 +1600,34 @@ drawBlueDot:
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
 
-    // 移动方向箭头（画在图标/蓝点之上，若 heading>=0）：有罗盘图标时按图标尺寸放大，使箭头伸出图标边缘
+    // 移动方向箭头（画在图标/蓝点之上，若 heading>=0）：0.2.8 主界面 createHeadingArrowIcon 同款
+    // 凹口箭头（箭尖/两底角/凹口四顶点，两三角形填充），以定位点为中心固定 dp 尺寸，
+    // 不随罗盘图标放大（旧版按图标尺寸拉伸导致三角过大）。
     if (heading >= 0.0) {
         const float th = static_cast<float>(heading * 3.14159265358979 / 180.0);
         const float dirX = std::sin(th);
         const float dirY = -std::cos(th);
         const float perpX = std::cos(th);  // 与 dir 垂直（dir·perp = sinθcosθ - cosθsinθ = 0）
         const float perpY = std::sin(th);
-        // 箭头尺寸：有罗盘图标时按图标半宽放大（伸出图标边缘），无图标时按蓝点白边半径
-        const float base = hasIcon ? iconHalfW : ringR;
-        const float tip = base * (hasIcon ? 1.35f : 2.2f);   // 箭尖到定位点的距离
-        const float half = base * (hasIcon ? 0.58f : 0.85f); // 箭尾半宽
+        const double dpPx = density * worldPerPx; // dp→px→世界单位
+        const float fwd = static_cast<float>(kArrowTipDp * dpPx);   // 箭尖（前）
+        const float back = static_cast<float>(kArrowBackDp * dpPx); // 底角（后）
+        const float half = static_cast<float>(kArrowHalfDp * dpPx); // 底角横向半宽
+        const float notch = static_cast<float>(kArrowNotchDp * dpPx); // 凹口（后）
+        const float tipX = cx + dirX * fwd, tipY = cy + dirY * fwd;   // 箭尖
+        const float brX = cx - dirX * back + perpX * half,
+                    brY = cy - dirY * back + perpY * half;            // 右底角
+        const float blX = cx - dirX * back - perpX * half,
+                    blY = cy - dirY * back - perpY * half;            // 左底角
+        const float nkX = cx - dirX * notch, nkY = cy - dirY * notch; // 凹口
         std::vector<float> arrow;
-        arrow.reserve(3 * kColorFloatsPerVertex);
-        pushColorVertex(arrow, cx + dirX * tip, cy + dirY * tip, kArrowR, kArrowG, kArrowB);      // 箭尖
-        pushColorVertex(arrow, cx + perpX * half, cy + perpY * half, kArrowR, kArrowG, kArrowB);   // 箭尾一
-        pushColorVertex(arrow, cx - perpX * half, cy - perpY * half, kArrowR, kArrowG, kArrowB);   // 箭尾二
+        arrow.reserve(6 * kColorFloatsPerVertex);
+        pushColorVertex(arrow, tipX, tipY, kArrowR, kArrowG, kArrowB);
+        pushColorVertex(arrow, brX, brY, kArrowR, kArrowG, kArrowB);
+        pushColorVertex(arrow, nkX, nkY, kArrowR, kArrowG, kArrowB);
+        pushColorVertex(arrow, tipX, tipY, kArrowR, kArrowG, kArrowB);
+        pushColorVertex(arrow, nkX, nkY, kArrowR, kArrowG, kArrowB);
+        pushColorVertex(arrow, blX, blY, kArrowR, kArrowG, kArrowB);
         // 切回 color 程序（icon 程序或蓝点绘制后可能已切换）
         colorProgram_.use();
         glUniformMatrix4fv(cUMvp_, 1, GL_FALSE, ortho.data());
@@ -1654,7 +1641,7 @@ drawBlueDot:
                               reinterpret_cast<const void *>(2 * sizeof(float)));
         glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(arrow.size() * sizeof(float)),
                      arrow.data(), GL_DYNAMIC_DRAW);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
         glDisableVertexAttribArray(cAPos_);
         glDisableVertexAttribArray(cAColor_);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -2919,22 +2906,30 @@ void Renderer::drawLocationMarker3D(const Navigator::Camera3D &cam, const Matrix
         }
     }
 
-    // 4) 移动方向箭头（贴地，画在图标之上，heading>=0）：切平面内沿 heading（顺时针自北）方向的三角形。
+    // 4) 移动方向箭头（贴地，画在图标之上，heading>=0）：切平面内沿 heading（顺时针自北）方向的
+    //    凹口箭头，几何同 2D drawLocationMarker（0.2.8 createHeadingArrowIcon 同款），以标示中心
+    //    固定 dp 尺寸，不随罗盘图标放大。
     if (heading >= 0.0) {
         const double hr = heading * 3.14159265358979323846 / 180.0;
         const Vec3 dirH = north * std::cos(hr) + east * std::sin(hr);
         const Vec3 perpH = up.cross(dirH); // 切平面内垂直（单位）
-        const double baseM = hasIcon ? iconHalfWm : kMarkerRingRadiusDp * density * metersPerPx;
-        const double tipM = baseM * (hasIcon ? 1.35 : 2.2);   // 箭尖到图标中心距离（米）
-        const double halfM = baseM * (hasIcon ? 0.58 : 0.85); // 箭尾半宽（米）
-        const Vec3 tipW = center + dirH * tipM;
-        const Vec3 b1W = center + perpH * halfM;
-        const Vec3 b2W = center - perpH * halfM;
+        const double dpM = density * metersPerPx; // dp→px→米
+        const double fwdM = kArrowTipDp * dpM;    // 箭尖（前）
+        const double backM = kArrowBackDp * dpM;  // 底角（后）
+        const double halfM = kArrowHalfDp * dpM;  // 底角横向半宽
+        const double notchM = kArrowNotchDp * dpM; // 凹口（后）
+        const Vec3 tipW = center + dirH * fwdM;
+        const Vec3 brW = center - dirH * backM + perpH * halfM;
+        const Vec3 blW = center - dirH * backM - perpH * halfM;
+        const Vec3 nkW = center - dirH * notchM;
         std::vector<float> arrow;
-        arrow.reserve(3 * kGlobeColorFloatsPerVertex);
+        arrow.reserve(6 * kGlobeColorFloatsPerVertex);
         pushGlobeColorVert(arrow, toRtc(tipW), kArrowR, kArrowG, kArrowB, 1.0f);
-        pushGlobeColorVert(arrow, toRtc(b1W), kArrowR, kArrowG, kArrowB, 1.0f);
-        pushGlobeColorVert(arrow, toRtc(b2W), kArrowR, kArrowG, kArrowB, 1.0f);
+        pushGlobeColorVert(arrow, toRtc(brW), kArrowR, kArrowG, kArrowB, 1.0f);
+        pushGlobeColorVert(arrow, toRtc(nkW), kArrowR, kArrowG, kArrowB, 1.0f);
+        pushGlobeColorVert(arrow, toRtc(tipW), kArrowR, kArrowG, kArrowB, 1.0f);
+        pushGlobeColorVert(arrow, toRtc(nkW), kArrowR, kArrowG, kArrowB, 1.0f);
+        pushGlobeColorVert(arrow, toRtc(blW), kArrowR, kArrowG, kArrowB, 1.0f);
         globeColorProgram_.use();
         glUniformMatrix4fv(gc3UMvp_, 1, GL_FALSE, viewProjRtc.data());
         glBindBuffer(GL_ARRAY_BUFFER, vboGlobeMesh_);
@@ -2946,7 +2941,7 @@ void Renderer::drawLocationMarker3D(const Navigator::Camera3D &cam, const Matrix
         glEnableVertexAttribArray(gc3AColor_);
         glVertexAttribPointer(gc3AColor_, 4, GL_FLOAT, GL_FALSE, astride,
                               reinterpret_cast<const void *>(3 * sizeof(float)));
-        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
         glDisableVertexAttribArray(gc3APos_);
         glDisableVertexAttribArray(gc3AColor_);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
